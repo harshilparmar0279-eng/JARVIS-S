@@ -1117,9 +1117,11 @@ class JarvisLive:
             _cfg = json.loads(open(API_CONFIG_PATH, encoding="utf-8").read())
             self._asst_name = (_cfg.get("assistant_name") or "JARVIS").strip()
             _user_name = (_cfg.get("user_name") or "").strip()
+            if not _user_name or _user_name == "-":
+                _user_name = "Harshil"
         except Exception:
             self._asst_name = "JARVIS"
-            _user_name = ""
+            _user_name = "Harshil"
 
         memory     = load_memory()
         mem_str    = format_memory_for_prompt(memory)
@@ -1292,6 +1294,8 @@ class JarvisLive:
                 print(f"[JARVIS] ⚠️ Replicated voice load failed: {e}")
 
         if voice_cfg is None:
+            # Easily changeable prebuilt Gemini voice constant for Mayra
+            DEFAULT_MAYRA_VOICE = "Aoede"
             _TIMBRE_MAP = {
                 "charon": "Charon",
                 "puck": "Puck",
@@ -1301,6 +1305,7 @@ class JarvisLive:
                 "kavya": "Aoede",
                 "xg": "Aoede",
                 "tiara": "Kore",
+                "mayra": DEFAULT_MAYRA_VOICE,
             }
             v_low = (selected_voice or "").strip().lower()
             if v_low in _TIMBRE_MAP:

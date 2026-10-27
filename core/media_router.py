@@ -98,7 +98,7 @@ def clean_song_query(raw_query: str) -> str:
         r"\s+(music\s+)?(play\s+karo|chalao|bajao|lagao|sunao|chalu\s+karo|play\s+kardo)$",
         r"\s+(gana|song|music)$",
         r"\s+(kholo|open\s+karo|open|launch)$",
-        r"^(jarvis|kavya|alexa|siri|computer)[,\s]+",
+        r"^(jarvis|kavya|xg|tiara|mayra|alexa|siri|computer)[,\s]+",
     ]
     for pat in patterns_to_remove:
         q = re.sub(pat, "", q, flags=re.IGNORECASE).strip()

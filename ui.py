@@ -2038,7 +2038,10 @@ class CustomizeOverlay(QWidget):
 
         n2_col = QVBoxLayout(); n2_col.setSpacing(2)
         n2_col.addWidget(QLabel("YOUR CALLSIGN (SIR / NAME)", font=QFont("Courier New", 6), styleSheet="color: #4a7d90;"))
-        self._user_input = QLineEdit(user_name)
+        _u_val = (user_name or "").strip()
+        if not _u_val or _u_val == "-":
+            _u_val = "Harshil"
+        self._user_input = QLineEdit(_u_val)
         self._user_input.setPlaceholderText("sir")
         self._user_input.setFont(QFont("Courier New", 8))
         self._user_input.setFixedHeight(24)
@@ -2190,6 +2193,7 @@ class CustomizeOverlay(QWidget):
             ("Cute & Caring", "kavya"),
             ("Romantic Warm", "XG"),
             ("Intimate Seductive", "Tiara"),
+            ("Mayra Masti", "Mayra"),
             ("Formal Butler", "Charon"),
             ("Crisp Balanced", "Kore"),
         ]
@@ -2452,6 +2456,8 @@ class CustomizeOverlay(QWidget):
 
     def _on_voice_pick(self, name: str):
         self._sel_voice = name
+        if name.lower() == "mayra":
+            self._name_input.setText("Mayra")
         self._refresh_voice_btns()
 
     def _rebuild_voice_pills(self):
@@ -2476,7 +2482,7 @@ class CustomizeOverlay(QWidget):
         self._voice_container_lay.addWidget(lbl_p)
 
         row_char = QHBoxLayout(); row_char.setSpacing(4)
-        for _v, _badge in [("kavya", "🌸 Kavya"), ("XG", "🔥 XG"), ("Tiara", "✨ Tiara")]:
+        for _v, _badge in [("kavya", "🌸 Kavya"), ("XG", "🔥 XG"), ("Tiara", "✨ Tiara"), ("Mayra", "🌙 Mayra")]:
             b = QPushButton(_badge)
             b.setCheckable(True)
             b.setFixedHeight(24)
@@ -2507,7 +2513,7 @@ class CustomizeOverlay(QWidget):
 
         # Extra customs (if any)
         avail = get_available_voices()
-        extra_customs = [v for v in avail if v not in ("Charon", "Puck", "Kore", "Fenrir", "Aoede", "kavya", "XG", "Tiara")]
+        extra_customs = [v for v in avail if v not in ("Charon", "Puck", "Kore", "Fenrir", "Aoede", "kavya", "XG", "Tiara", "Mayra")]
         if extra_customs:
             row_custom = QHBoxLayout(); row_custom.setSpacing(4)
             for _v in extra_customs:
@@ -2555,6 +2561,10 @@ class CustomizeOverlay(QWidget):
             txt = ("✨ Tiara (Smooth, Soft and Seductive)\n"
                    "Sweetness & husky depth, intimate and personal warmth.\n"
                    "Permanent Native Gemini Acoustic (Kore) • 0 ElevenLabs Connection.")
+        elif v_lower == "mayra":
+            txt = ("🌙 Mayra (Sweet Playful Girlfriend)\n"
+                   "Real, interactive, aur emotionally present. Thodi nakhre wali, masti karne wali, caring persona.\n"
+                   "Permanent Native Gemini Acoustic (Aoede) • 0 ElevenLabs Connection.")
         elif info:
             cat = info.get("voice_category", "Custom Voice")
             base = info.get("base_voice", "Aoede")
@@ -2565,7 +2575,7 @@ class CustomizeOverlay(QWidget):
                    "Direct low-latency speech synthesis.")
 
         self._cv_info_lbl.setText(txt)
-        is_perm = v_lower in ("charon", "puck", "kore", "fenrir", "aoede", "kavya", "xg", "tiara")
+        is_perm = v_lower in ("charon", "puck", "kore", "fenrir", "aoede", "kavya", "xg", "tiara", "mayra")
         self._cv_del_btn.setVisible(not is_perm)
         self._cv_test_active_btn.setVisible(not is_perm)
 

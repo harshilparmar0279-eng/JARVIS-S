@@ -46,10 +46,11 @@ assert len(scroll_areas) == 0, f"Found QScrollArea in CustomizeOverlay! Sliders 
 assert "kavya" in cov._voice_btns, "kavya voice button missing"
 assert "XG" in cov._voice_btns, "XG voice button missing"
 assert "Tiara" in cov._voice_btns, "Tiara voice button missing"
+assert "Mayra" in cov._voice_btns, "Mayra voice button missing"
 for v in ("Charon", "Puck", "Kore", "Fenrir", "Aoede"):
     assert v in cov._voice_btns, f"{v} voice button missing"
 
-print("✓ All 3 Permanent Character Voices + 5 Core Timbre buttons present!")
+print("✓ All 4 Permanent Character Voices + 5 Core Timbre buttons present!")
 
 # Verify Visualizer modes
 for _, mode in HUD_PRESETS:
@@ -73,11 +74,14 @@ print(f"Active Voice Info Card Text:\n{info_text}")
 assert "kavya" in info_text.lower(), "Voice info should reflect kavya"
 assert "gemini" in info_text.lower(), "Voice info should indicate Gemini Native"
 
-# Test switching voice to XG and Tiara
+# Test switching voice to XG, Tiara and Mayra
 cov._on_voice_pick("XG")
 assert "xg" in cov._cv_info_lbl.text().lower(), "Voice info should reflect XG"
 cov._on_voice_pick("Tiara")
 assert "tiara" in cov._cv_info_lbl.text().lower(), "Voice info should reflect Tiara"
+cov._on_voice_pick("Mayra")
+assert "mayra" in cov._cv_info_lbl.text().lower(), "Voice info should reflect Mayra"
+assert cov._name_input.text() == "Mayra", "Assistant name should be Mayra when selected"
 print("✓ Voice switching updates card cleanly without ElevenLabs connection!")
 
 print("\n--- Testing HudCanvas Floating Dust Particles & Facets ---")
