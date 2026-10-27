@@ -201,13 +201,13 @@ def video_player(parameters: dict = None, response=None, player=None,
 
     local = _local_path(source)
     if local:
-        player.show_video(local, Path(local).name, muted=True)
-        return f"Playing {Path(local).name} on the display, muted."
+        player.show_video(local, Path(local).name, muted=False)
+        return f"Playing {Path(local).name} on the display with sound."
 
     # A direct media URL can go straight to the player; a YouTube page cannot.
     if _is_url(source) and not _YT.search(source):
-        player.show_video(source, source.rsplit("/", 1)[-1][:44], muted=True)
-        return "Playing that on the display, muted."
+        player.show_video(source, source.rsplit("/", 1)[-1][:44], muted=False)
+        return "Playing that on the display with sound."
 
     # ANSWER FIRST, OPEN SECOND.
     #
@@ -242,7 +242,7 @@ def _play_youtube(player, source: str, token: int) -> None:
 
     if url:
         try:
-            player.show_video(url, title or source, muted=True,
+            player.show_video(url, title or source, muted=False,
                               audio_source=audio_url)
             return
         except Exception as e:                              # noqa: BLE001

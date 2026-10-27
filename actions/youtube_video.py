@@ -64,14 +64,14 @@ def _get_api_key() -> str:
 
 def _open_url(url: str) -> None:
     try:
-        if is_mac():
-            subprocess.Popen(["open", url])
-        elif is_linux():
-            subprocess.Popen(["xdg-open", url])
-        else:
-            subprocess.Popen(["cmd", "/c", "start", "", url], shell=False)
+        from actions.brave_launcher import open_in_brave
+        ok, msg = open_in_brave(url)
+        if ok:
+            print(f"[YouTube] ✅ {msg}")
+            return
+        print(f"[YouTube] ⚠️ {msg}")
     except Exception as e:
-        print(f"[YouTube] ⚠️ open_url failed: {e}")
+        print(f"[YouTube] ⚠️ open_in_brave failed: {e}")
 
 def _scrape_first_video_url(query: str) -> str | None:
 
@@ -281,6 +281,23 @@ def _scrape_trending(region: str = "TR", max_results: int = 8) -> list[dict]:
         print(f"[YouTube] ⚠️ Trending scrape failed: {e}")
         return []
 
+def _handle_search(parameters: dict, player) -> str:
+    query = parameters.get("query", "").strip()
+    if not query:
+        return "Please tell me what you'd like to search for on YouTube, sir."
+
+    if player:
+        player.write_log(f"[YouTube] Searching: {query}")
+
+    print(f"[YouTube] 🔍 Searching YouTube for: {query}")
+    search_url = (
+        f"https://www.youtube.com/results"
+        f"?search_query={quote_plus(query)}"
+    )
+    _open_url(search_url)
+    return f"Opened YouTube search for: {query}"
+
+
 def _handle_play(parameters: dict, player) -> str:
     query = parameters.get("query", "").strip()
     if not query:
@@ -405,6 +422,7 @@ def _handle_trending(parameters: dict, player, speak) -> str:
 
 _ACTION_MAP = {
     "play":      _handle_play,
+    "search":    _handle_search,
     "summarize": _handle_summarize,
     "get_info":  _handle_get_info,
     "trending":  _handle_trending,
@@ -444,17 +462,17 @@ def youtube_video(
 # ── Tool declaration (auto-discovered by core/action_loader.py) ──────────────
 TOOL = {
     "name": "youtube_video",
-    "description": "Controls YouTube. Use for: playing videos, summarizing a video's content, getting video info, or showing trending videos.",
+    "description": "Controls YouTube. Use for: searching YouTube, playing videos, summarizing a video's content, getting video info, or showing trending videos.",
     "parameters": {
         "type": "OBJECT",
         "properties": {
             "action": {
                 "type": "STRING",
-                "description": "play | summarize | get_info | trending (default: play)"
+                "description": "play | search | summarize | get_info | trending (default: play)"
             },
             "query": {
                 "type": "STRING",
-                "description": "Search query for play action"
+                "description": "Search query for play or search action"
             },
             "save": {
                 "type": "BOOLEAN",

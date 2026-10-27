@@ -506,9 +506,11 @@ class HoloAvatar:
         xs = cx + verts[:, 0] * k
         ys = cy - verts[:, 1] * k
 
+        # Holographic Brass & Teal facets: surface uses primary (brass), wire uses accent (teal)
+        wire_col = accent if accent is not None else primary
         if self.shaded:
             self._paint_surface(p, xs, ys, norms, verts, primary, bg, amp)
-        self._paint_wire(p, xs, ys, norms, verts, primary, bg, amp)
+        self._paint_wire(p, xs, ys, norms, verts, wire_col, bg, amp)
         self._paint_features(p, xs, ys, norms, r, primary, accent, bg, amp)
 
     def _paint_surface(self, p: QPainter, xs, ys, norms, verts,

@@ -33,7 +33,7 @@ from .base import Field, caps_of, validate
 # see the module docstring. A name here that does not import is reported and
 # skipped, never raised.
 _MODULES: dict[str, tuple[str, ...]] = {
-    "llm": ("llm_openai",),
+    "llm": ("llm_gemini", "llm_openai"),
     "stt": ("stt_whisper",),
     "tts": ("tts_piper", "tts_system", "tts_elevenlabs"),
     "engine": ("engine_pipeline",),
@@ -159,11 +159,17 @@ def defaults(provider_id: str) -> dict:
 
 
 def missing_fields(provider_id: str, cfg: dict) -> list[str]:
-    """Required fields with nothing in them — what the panel shows in red, and
+    """Required fields with nothing in them and no default value — what the panel shows in red, and
     what stops a half-configured provider from being tried at runtime."""
     decl = get_declaration(provider_id)
     if decl is None:
         return []
-    return [f.label for f in decl.get("needs", ())
-            if isinstance(f, Field) and f.required
-            and not str(cfg.get(f.key, "")).strip()]
+    missing = []
+    for f in decl.get("needs", ()):
+        if isinstance(f, Field) and f.required:
+            val = cfg.get(f.key)
+            if val is None or str(val).strip() == "":
+                val = f.default
+            if val is None or str(val).strip() == "":
+                missing.append(f.label)
+    return missing

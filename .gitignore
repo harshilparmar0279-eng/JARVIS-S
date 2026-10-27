@@ -53,3 +53,6 @@ desktop.ini
 logs/
 downloads/
 screenshots/
+
+# Chrome profiles cache
+config/chrome_profiles.json

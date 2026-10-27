@@ -50,7 +50,7 @@ except Exception as _e:            # noqa: BLE001 - reported, never fatal
     print(f"[Video] playback unavailable ({_e}) — the HUD will not show video.")
 
 from PyQt6.QtWidgets import (
-    QApplication, QComboBox, QFileDialog, QFrame, QHBoxLayout, QLabel, QLineEdit,
+    QApplication, QCheckBox, QComboBox, QFileDialog, QFrame, QHBoxLayout, QLabel, QLineEdit,
     QMainWindow, QPushButton, QScrollArea, QSizePolicy, QSplitter,
     QGraphicsScene, QGraphicsView,
     QStackedWidget, QTextEdit, QVBoxLayout, QWidget, QProgressBar, QSlider,
@@ -60,6 +60,17 @@ try:
     from core.avatar import HoloAvatar
 except Exception:      # pragma: no cover — HUD must never die over cosmetics
     HoloAvatar = None
+
+from core.resource_guardian import (
+    ResourceGuardian,
+    PROFILE_LOW_RAM,
+    PROFILE_BALANCED,
+    PROFILE_FULL_EXPERIENCE,
+    PROFILE_DISPLAY_NAMES,
+)
+from core.command_palette import CommandPaletteRegistry, CommandItem
+from ui_resource_guardian import ResourceSparkline, ResourceDiagnosticsOverlay
+from ui_command_palette import CommandPaletteOverlay
 
 
 def _base_dir() -> Path:
@@ -93,28 +104,41 @@ _RIGHT_W = 340
 _OS = platform.system()  # "Windows" | "Darwin" | "Linux"
 
 
+from theme import ThemeColors, THEME_PRESETS as _THEME_PRESETS, HUD_PRESETS as _HUD_PRESETS, LAYOUT_PRESETS as _LAYOUT_PRESETS, CSS_VARIABLES
+
 class C:
-    BG        = "#00060a"
-    PANEL     = "#010d14"
-    PANEL2    = "#010f18"
-    BORDER    = "#0d3347"
-    BORDER_B  = "#1a5c7a"
-    BORDER_A  = "#0f4060"
-    PRI       = "#00d4ff"
-    PRI_DIM   = "#007a99"
-    PRI_GHO   = "#001f2e"
-    ACC       = "#ff6b00"
-    ACC2      = "#ffcc00"
-    GREEN     = "#00ff88"
-    GREEN_D   = "#00aa55"
-    RED       = "#ff3355"
-    MUTED_C   = "#ff3366"
-    TEXT      = "#8ffcff"
-    TEXT_DIM  = "#3a8a9a"
-    TEXT_MED  = "#5ab8cc"
-    WHITE     = "#d8f8ff"
-    DARK      = "#000d14"
-    BAR_BG    = "#011520"
+    # Deep ocean dark navy background
+    BG        = ThemeColors.BG
+    PANEL     = ThemeColors.PANEL
+    PANEL2    = ThemeColors.PANEL2
+    # Thin warm brass & gold borders
+    BORDER    = ThemeColors.BORDER
+    BORDER_B  = ThemeColors.BORDER_B
+    BORDER_A  = ThemeColors.BORDER_A
+    # Holographic cyan/teal glow
+    PRI       = ThemeColors.PRI
+    PRI_DIM   = ThemeColors.PRI_DIM
+    PRI_GHO   = ThemeColors.PRI_GHO
+    # Warm brass & gold
+    BRASS     = ThemeColors.BRASS
+    BRASS_BRIGHT = ThemeColors.BRASS_BRIGHT
+    BRASS_GHO = ThemeColors.BRASS_GHO
+    # Warm amber
+    ACC       = ThemeColors.ACC
+    ACC2      = ThemeColors.ACC2
+    ACC_GHO   = ThemeColors.ACC_GHO
+    # System status (no purple anywhere)
+    GREEN     = ThemeColors.GREEN
+    GREEN_D   = ThemeColors.GREEN_D
+    RED       = ThemeColors.RED
+    MUTED_C   = ThemeColors.MUTED_C
+    # Monospace typography
+    TEXT      = ThemeColors.TEXT
+    TEXT_DIM  = ThemeColors.TEXT_DIM
+    TEXT_MED  = ThemeColors.TEXT_MED
+    WHITE     = ThemeColors.WHITE
+    DARK      = ThemeColors.DARK
+    BAR_BG    = ThemeColors.BAR_BG
 
 
 # Keys tied to the accent colour — status colours (ACC, GREEN, RED…) stay fixed
@@ -125,7 +149,7 @@ _HUE_LINKED = (
 )
 _PALETTE_DEFAULTS: dict[str, str] = {k: getattr(C, k) for k in _HUE_LINKED}
 
-DEFAULT_UI_COLOR = _PALETTE_DEFAULTS["PRI"]
+DEFAULT_UI_COLOR = "#00e5ff" 
 
 
 def apply_ui_accent(accent_hex: str) -> bool:
@@ -145,24 +169,46 @@ def apply_ui_accent(accent_hex: str) -> bool:
     except ValueError:
         return False
 
-    def _hsv(h: str) -> tuple[float, float, float]:
-        r = int(h[1:3], 16) / 255
-        g = int(h[3:5], 16) / 255
-        b = int(h[5:7], 16) / 255
-        return colorsys.rgb_to_hsv(r, g, b)
+    def _parse_color(c: str) -> tuple[float, float, float, float | None]:
+        c = (c or "").strip().lower()
+        if c.startswith("#"):
+            if len(c) == 7:
+                return int(c[1:3], 16) / 255.0, int(c[3:5], 16) / 255.0, int(c[5:7], 16) / 255.0, None
+            elif len(c) == 9:
+                return int(c[1:3], 16) / 255.0, int(c[3:5], 16) / 255.0, int(c[5:7], 16) / 255.0, int(c[7:9], 16) / 255.0
+        elif c.startswith("rgba"):
+            parts = c[c.find("(") + 1 : c.rfind(")")].split(",")
+            return float(parts[0].strip()) / 255.0, float(parts[1].strip()) / 255.0, float(parts[2].strip()) / 255.0, float(parts[3].strip())
+        elif c.startswith("rgb"):
+            parts = c[c.find("(") + 1 : c.rfind(")")].split(",")
+            return float(parts[0].strip()) / 255.0, float(parts[1].strip()) / 255.0, float(parts[2].strip()) / 255.0, None
+        return 0.0, 0.0, 0.0, None
 
-    base_h            = _hsv(_PALETTE_DEFAULTS["PRI"])[0]
-    acc_h, acc_s, _av = _hsv(accent_hex)
+    def _color_to_hsv(c: str) -> tuple[float, float, float, float | None]:
+        r, g, b, a = _parse_color(c)
+        h, s, v = colorsys.rgb_to_hsv(r, g, b)
+        return h, s, v, a
+
+    base_h = _color_to_hsv(_PALETTE_DEFAULTS["PRI"])[0]
+    acc_h, acc_s, _av, _ = _color_to_hsv(accent_hex)
     dh   = acc_h - base_h
     grey = acc_s < 0.08   # near-grey accent → the whole theme is desaturated
 
     for key, hex0 in _PALETTE_DEFAULTS.items():
-        h, s, v = _hsv(hex0)
-        if grey:
-            s *= 0.15
-        r, g, b = colorsys.hsv_to_rgb((h + dh) % 1.0, s, v)
-        setattr(C, key, "#{:02x}{:02x}{:02x}".format(
-            int(r * 255 + 0.5), int(g * 255 + 0.5), int(b * 255 + 0.5)))
+        try:
+            h, s, v, a = _color_to_hsv(hex0)
+            if grey:
+                s *= 0.15
+            r, g, b = colorsys.hsv_to_rgb((h + dh) % 1.0, s, v)
+            if a is not None:
+                alpha_str = f"{a:.2f}".rstrip("0").rstrip(".") if a != int(a) else str(int(a))
+                val = f"rgba({int(r * 255 + 0.5)}, {int(g * 255 + 0.5)}, {int(b * 255 + 0.5)}, {alpha_str})"
+            else:
+                val = "#{:02x}{:02x}{:02x}".format(
+                    int(r * 255 + 0.5), int(g * 255 + 0.5), int(b * 255 + 0.5))
+            setattr(C, key, val)
+        except Exception:
+            pass
     return True
 
 
@@ -201,7 +247,34 @@ def retheme_all_widgets(old: dict[str, str], new: dict[str, str]) -> None:
 
 
 def qcol(h: str, a: int = 255) -> QColor:
-    c = QColor(h); c.setAlpha(a); return c
+    if not h:
+        return QColor(0, 0, 0, a)
+    h_str = str(h).strip()
+    if h_str.startswith("rgba"):
+        try:
+            parts = h_str[h_str.find("(") + 1 : h_str.rfind(")")].split(",")
+            r = int(float(parts[0].strip()))
+            g = int(float(parts[1].strip()))
+            b = int(float(parts[2].strip()))
+            alpha_val = float(parts[3].strip())
+            alpha_int = int(alpha_val * 255 + 0.5) if (alpha_val <= 1.0 and "." in parts[3]) else int(alpha_val)
+            if a != 255:
+                alpha_int = int(alpha_int * (a / 255.0))
+            return QColor(r, g, b, alpha_int)
+        except Exception:
+            pass
+    elif h_str.startswith("rgb"):
+        try:
+            parts = h_str[h_str.find("(") + 1 : h_str.rfind(")")].split(",")
+            r = int(float(parts[0].strip()))
+            g = int(float(parts[1].strip()))
+            b = int(float(parts[2].strip()))
+            return QColor(r, g, b, a)
+        except Exception:
+            pass
+    c = QColor(h_str)
+    c.setAlpha(a)
+    return c
 
 
 # ── Windows GPU via NVML DLL (no subprocess, no console window) ──────────────
@@ -255,6 +328,11 @@ class _SysMetrics:
         self.net  = 0.0   
         self.gpu  = -1.0  
         self.tmp  = -1.0  
+        self.proc_ram = 0.0
+        self.proc_cpu = 0.0
+        self.sys_ram_avail = 0.0
+        self.sys_ram_total = 0.0
+        self.state = "IDLE"
         self._lock = threading.Lock()
         self._last_net = psutil.net_io_counters()
         self._last_net_t = time.time()
@@ -269,8 +347,9 @@ class _SysMetrics:
         self._nv_unix   = None         # cached (lib, dev) for Linux/macOS NVML
         self._wmi_conn  = None         # cached WMI connection (creating one is slow)
         self._wmi_ok    = None         # None=untested, False=unavailable here
-        t = threading.Thread(target=self._loop, daemon=True)
+        t = threading.Thread(target=self._loop, daemon=True, name="sys-metrics-poller")
         t.start()
+        ResourceGuardian.get_instance().register_worker("sys_metrics", "System & Process telemetry poller", thread_ref=t, is_essential=True)
 
     def _loop(self):
         while self._running:
@@ -278,11 +357,13 @@ class _SysMetrics:
                 self._update()
             except Exception:
                 pass
-            time.sleep(2.0)
+            interval = ResourceGuardian.get_instance().get_telemetry_interval_sec()
+            time.sleep(interval)
 
     def _update(self):
-        cpu = psutil.cpu_percent(interval=None)
-        mem = psutil.virtual_memory().percent
+        snap = ResourceGuardian.get_instance().capture_snapshot()
+        cpu = snap.system_cpu_percent
+        mem = snap.system_ram_percent
 
         nc  = psutil.net_io_counters()
         now = time.time()
@@ -310,6 +391,14 @@ class _SysMetrics:
         with self._lock:
             self.cpu = cpu
             self.mem = mem
+            self.net = net
+            self.gpu = gpu
+            self.tmp = tmp
+            self.proc_ram = snap.process_rss_mb
+            self.proc_cpu = snap.process_cpu_percent
+            self.sys_ram_avail = snap.system_ram_available_gb
+            self.sys_ram_total = snap.system_ram_total_gb
+            self.state = snap.state
             self.net = net
             self.gpu = gpu
             self.tmp = tmp
@@ -397,6 +486,11 @@ class _SysMetrics:
                 "net": self.net,
                 "gpu": self.gpu,
                 "tmp": self.tmp,
+                "proc_ram": self.proc_ram,
+                "proc_cpu": self.proc_cpu,
+                "sys_ram_avail": self.sys_ram_avail,
+                "sys_ram_total": self.sys_ram_total,
+                "state": self.state,
             }
 
 
@@ -463,6 +557,14 @@ class HudCanvas(QWidget):
         self._vis_i = None        # first schedule frame not yet handed to the mouth
         self._base_scale = 1.0    # slow "breathing" target; amp is added per-frame
         self._base_halo  = 55.0
+
+        # Floating dust particles for Holographic Brass & Deep Ocean ambiance
+        self._particles = [
+            [random.uniform(0, 1400), random.uniform(0, 1000),
+             random.uniform(-0.16, 0.16), random.uniform(-0.30, -0.05),
+             random.uniform(1.2, 2.6), random.uniform(0.18, 0.45)]
+            for _ in range(35)
+        ]
 
         self._tmr = QTimer(self)
         self._tmr.timeout.connect(self._step)
@@ -601,6 +703,12 @@ class HudCanvas(QWidget):
         # uses — one audio source, so the mouth can never drift out of sync.
         dt = now - self._step_t
         self._step_t = now
+
+        # Update floating dust particles
+        _w_c, _h_c = max(1, self.width()), max(1, self.height())
+        for _pt in self._particles:
+            _pt[0] = (_pt[0] + _pt[2]) % _w_c
+            _pt[1] = (_pt[1] + _pt[3]) % _h_c
         # Integrated, not derived from absolute time: multiplying wall-clock by
         # a rate that changes with state jumps the rings the instant JARVIS
         # starts talking. Same lesson the head's sway taught.
@@ -687,11 +795,11 @@ class HudCanvas(QWidget):
         if self.muted:
             return qcol(C.MUTED_C), qcol(C.MUTED_C)
         if self.speaking:
-            return qcol(C.PRI), qcol(C.ACC)
+            return qcol(getattr(C, "BRASS", "#d4af37")), qcol(C.ACC)
         if self.state in ("THINKING", "PROCESSING"):
-            return qcol(C.PRI), qcol(C.ACC2)
+            return qcol(getattr(C, "BRASS", "#d4af37")), qcol(C.ACC2)
         if self.state == "LISTENING":
-            return qcol(C.PRI), qcol(C.GREEN)
+            return qcol(C.PRI), qcol(getattr(C, "BRASS", "#d4af37"))
         return qcol(C.PRI), qcol(C.PRI_DIM)
 
     def _paint_core(self, p: QPainter, cx: float, cy: float, r: float,
@@ -835,9 +943,194 @@ class HudCanvas(QWidget):
             f = QFont("Courier New", fsz, QFont.Weight.Bold)
             f.setLetterSpacing(QFont.SpacingType.AbsoluteSpacing, space)
             p.setFont(f)
-            p.setPen(QPen(blend(qcol(C.WHITE), 0.6 + 0.4 * min(1.0, amp * 2)), 1))
             p.drawText(QRectF(cx - r, cy - fsz, r * 2, fsz * 2),
                        Qt.AlignmentFlag.AlignCenter, name)
+
+    def _paint_quantum(self, p: QPainter, cx: float, cy: float, r: float,
+                       W: float = 0.0, H: float = 0.0):
+        """Draw the 3D Quantum Orbital Sphere at (cx, cy) with radius r.
+        Dynamic energy plasma core + rotating 3D gyroscopic orbital particle rings +
+        speech-reactive quantum flares."""
+        main, acc = self._core_colours()
+        bg = qcol(C.BG)
+        amp = self._amp_disp
+        t = self._core_phase
+        live = (self.speaking or amp > 0.04) and not self.muted
+
+        def blend(col: QColor, a: float) -> QColor:
+            k = max(0.0, min(1.0, a))
+            return QColor(int(bg.red()   + (col.red()   - bg.red())   * k),
+                          int(bg.green() + (col.green() - bg.green()) * k),
+                          int(bg.blue()  + (col.blue()  - bg.blue())  * k))
+
+        p.setBrush(Qt.BrushStyle.NoBrush)
+
+        # 1. Soft atmospheric energy glow
+        lift = 1.0 + 0.65 * amp + (0.22 if self.speaking else 0.0)
+        p.setPen(Qt.PenStyle.NoPen)
+        g_outer = QRadialGradient(cx, cy, r * 0.85)
+        g_outer.setColorAt(0.0, blend(main, min(0.9, 0.40 * lift)))
+        g_outer.setColorAt(0.4, blend(acc, min(0.8, 0.20 * lift)))
+        g_outer.setColorAt(0.8, blend(main, 0.05))
+        g_outer.setColorAt(1.0, blend(main, 0.0))
+        p.setBrush(QBrush(g_outer))
+        p.drawEllipse(QRectF(cx - r * 0.85, cy - r * 0.85, r * 1.7, r * 1.7))
+
+        # 2. Outer quantum boundary rings with ticks
+        p.setBrush(Qt.BrushStyle.NoBrush)
+        p.setPen(QPen(blend(main, 0.25), 1, Qt.PenStyle.DashLine))
+        p.drawEllipse(QRectF(cx - r * 0.88, cy - r * 0.88, r * 1.76, r * 1.76))
+
+        # 3. Rotating 3D Orbital Particle Rings
+        orb_planes = [
+            (0.82, 0.32,  25.0,  1.4, main, 2.0),
+            (0.74, 0.38, -35.0, -1.8, acc,  1.8),
+            (0.65, 0.28,  70.0,  2.2, main, 1.4),
+        ]
+        rate = 1.0 + (1.6 if self.state in ("THINKING", "PROCESSING") else 0.0) + (1.2 if self.speaking else 0.0)
+
+        for rx_s, ry_s, tilt, spd, col, pw in orb_planes:
+            p.save()
+            p.translate(cx, cy)
+            p.rotate(tilt)
+            rx, ry = r * rx_s, r * ry_s
+            p.setPen(QPen(blend(col, 0.45), pw))
+            p.drawEllipse(QRectF(-rx, -ry, rx * 2, ry * 2))
+
+            orbit_angle = (t * spd * rate * 45.0) % 360.0
+            for pt_idx in range(3):
+                pt_a = math.radians(orbit_angle + pt_idx * 120.0)
+                px = rx * math.cos(pt_a)
+                py = ry * math.sin(pt_a)
+                p.setPen(Qt.PenStyle.NoPen)
+                p.setBrush(QBrush(blend(qcol(C.WHITE), 0.9)))
+                node_r = 3.0 + (1.5 * amp if live else 0.5)
+                p.drawEllipse(QRectF(px - node_r, py - node_r, node_r * 2, node_r * 2))
+                p.setBrush(QBrush(blend(col, 0.4)))
+                p.drawEllipse(QRectF(px - node_r * 2, py - node_r * 2, node_r * 4, node_r * 4))
+            p.restore()
+
+        # 4. Central 3D energy core sphere
+        core_r = r * (0.32 + 0.08 * amp)
+        g_core = QRadialGradient(cx - core_r * 0.3, cy - core_r * 0.3, core_r * 1.3)
+        g_core.setColorAt(0.0, blend(qcol(C.WHITE), min(1.0, 0.85 + 0.15 * amp)))
+        g_core.setColorAt(0.35, blend(acc if live else main, 0.80))
+        g_core.setColorAt(0.75, blend(main, 0.50))
+        g_core.setColorAt(1.0, blend(main, 0.10))
+        p.setPen(QPen(blend(qcol(C.WHITE), 0.6), 1.5))
+        p.setBrush(QBrush(g_core))
+        p.drawEllipse(QRectF(cx - core_r, cy - core_r, core_r * 2, core_r * 2))
+
+        # 5. Audio-reactive quantum flare rays
+        n_rays = 40
+        rays = []
+        base_r = core_r + 2
+        for i in range(n_rays):
+            angle = math.radians(i * (360.0 / n_rays) + t * 20.0)
+            ca, sa = math.cos(angle), math.sin(angle)
+            flair = 0.5 + 0.5 * math.sin(t * 3.5 + i * 0.8)
+            idle_h = 3.0 + 2.0 * math.sin(t * 1.5 + i * 0.5)
+            ray_len = idle_h + (r * 0.22 * amp * flair if live else 0.0)
+            rays.append(QLineF(cx + ca * base_r, cy + sa * base_r,
+                               cx + ca * (base_r + ray_len), cy + sa * (base_r + ray_len)))
+        p.setBrush(Qt.BrushStyle.NoBrush)
+        p.setPen(QPen(blend(acc if live else main, 0.5 + 0.5 * amp), 1.4))
+        p.drawLines(rays)
+
+        # 6. Center Assistant Monogram / Core text
+        name = self._assistant_name or "AI"
+        fsz = max(7, int(core_r * 0.34))
+        f = QFont("Courier New", fsz, QFont.Weight.Bold)
+        p.setFont(f)
+        p.setPen(QPen(blend(qcol(C.WHITE), 0.9), 1))
+        p.drawText(QRectF(cx - core_r, cy - fsz, core_r * 2, fsz * 2),
+                   Qt.AlignmentFlag.AlignCenter, name)
+
+    def _paint_neural(self, p: QPainter, cx: float, cy: float, r: float,
+                      W: float = 0.0, H: float = 0.0):
+        """Draw the Cyberpunk Neural Waveform Visualizer at (cx, cy).
+        Multi-harmonic fluid sine ribbons, synaptic frequency nodes, and sound iris."""
+        main, acc = self._core_colours()
+        bg = qcol(C.BG)
+        amp = self._amp_disp
+        t = self._core_phase
+        live = (self.speaking or amp > 0.04) and not self.muted
+
+        def blend(col: QColor, a: float) -> QColor:
+            k = max(0.0, min(1.0, a))
+            return QColor(int(bg.red()   + (col.red()   - bg.red())   * k),
+                          int(bg.green() + (col.green() - bg.green()) * k),
+                          int(bg.blue()  + (col.blue()  - bg.blue())  * k))
+
+        p.setBrush(Qt.BrushStyle.NoBrush)
+
+        # 1. Subtle central radar / holographic ring backdrop
+        for rr, a in ((0.85, 0.12), (0.60, 0.18), (0.35, 0.25)):
+            rad = r * rr
+            p.setPen(QPen(blend(main, a), 1))
+            p.drawEllipse(QRectF(cx - rad, cy - rad, rad * 2, rad * 2))
+
+        # Circular sound ripples expanding outward
+        rip_phase = (t * 1.5) % 1.0
+        rip_r = r * 0.2 + r * 0.65 * rip_phase
+        rip_alpha = (1.0 - rip_phase) * (0.4 + 0.5 * amp)
+        p.setPen(QPen(blend(acc if live else main, rip_alpha), 1.5))
+        p.drawEllipse(QRectF(cx - rip_r, cy - rip_r, rip_r * 2, rip_r * 2))
+
+        # 2. Multi-harmonic Sine Wave Ribbons
+        wave_span = min(W * 0.90, r * 2.8)
+        x0 = cx - wave_span / 2.0
+        n_steps = ResourceGuardian.get_instance().get_wave_steps()
+        dx = wave_span / n_steps
+
+        wave_layers = [
+            (1.0, 1.2, 0.0,  main, 2.2, 0.85),
+            (2.0, 1.8, 1.4,  acc,  1.8, 0.70),
+            (3.0, 0.9, 2.8,  main, 1.4, 0.50),
+            (1.5, 2.4, 4.1,  acc,  1.2, 0.40),
+        ]
+
+        active_amp = (12.0 + 55.0 * amp) if live else (6.0 + 3.0 * math.sin(t * 1.5))
+
+        for freq, spd, phase_off, col, pen_w, alpha in wave_layers:
+            path = QPainterPath()
+            points = []
+            for i in range(n_steps + 1):
+                wx = x0 + i * dx
+                rel_x = (wx - cx) / (wave_span / 2.0)
+                envelope = max(0.0, 1.0 - rel_x * rel_x) ** 1.8
+                sin_val = math.sin(t * spd * 2.5 + rel_x * math.pi * freq * 1.5 + phase_off)
+                wy = cy + active_amp * envelope * sin_val
+                if i == 0:
+                    path.moveTo(wx, wy)
+                else:
+                    path.lineTo(wx, wy)
+                points.append((wx, wy))
+
+            p.setPen(QPen(blend(col, alpha), pen_w))
+            p.drawPath(path)
+
+            if live and pen_w >= 1.8:
+                for idx in (n_steps // 4, n_steps // 2, 3 * n_steps // 4):
+                    nx, ny = points[idx]
+                    p.setPen(Qt.PenStyle.NoPen)
+                    p.setBrush(QBrush(blend(qcol(C.WHITE), 0.85)))
+                    p.drawEllipse(QRectF(nx - 2.5, ny - 2.5, 5, 5))
+                    p.setBrush(QBrush(blend(col, 0.35)))
+                    p.drawEllipse(QRectF(nx - 5, ny - 5, 10, 10))
+
+        # 3. Center Cyber Core Badge
+        badge_w, badge_h = 100, 24
+        badge_rect = QRectF(cx - badge_w / 2, cy - badge_h / 2, badge_w, badge_h)
+        p.setBrush(QBrush(blend(qcol(C.PANEL2), 0.85)))
+        p.setPen(QPen(blend(main, 0.50), 1))
+        p.drawRoundedRect(badge_rect, 4, 4)
+
+        f = QFont("Courier New", 8, QFont.Weight.Bold)
+        f.setLetterSpacing(QFont.SpacingType.AbsoluteSpacing, 2)
+        p.setFont(f)
+        p.setPen(QPen(blend(qcol(C.WHITE), 0.9), 1))
+        p.drawText(badge_rect, Qt.AlignmentFlag.AlignCenter, self._assistant_name or "NEURAL")
 
     def paintEvent(self, _):
         p = QPainter(self)
@@ -850,6 +1143,14 @@ class HudCanvas(QWidget):
         cx, cy = W / 2, H / 2
         fw = min(W, H)
 
+        # Draw subtle glowing floating dust particles (Holographic Brass / Ocean specks)
+        if ResourceGuardian.get_instance().get_dust_particles_count() > 0:
+            p.setPen(Qt.PenStyle.NoPen)
+            for _pt in self._particles:
+                _alpha = int(_pt[5] * 255 * (0.8 + 0.2 * math.sin(self._tick * 0.05 + _pt[0])))
+                p.setBrush(QBrush(QColor(212, 175, 55, max(15, min(220, _alpha)))))
+                p.drawEllipse(QPointF(_pt[0], _pt[1]), _pt[4] * 0.5, _pt[4] * 0.5)
+
         # grid dots — blitted from a cached layer; rebuilt only when the size
         # or the theme's ghost colour changes (so live re-theming still works).
         _gkey = (W, H, C.PRI_GHO)
@@ -858,39 +1159,35 @@ class HudCanvas(QWidget):
             self._grid_key   = _gkey
         p.drawPixmap(0, 0, self._grid_cache)
 
-        # ── holographic head ────────────────────────────────────────────────
-        # Sized to the band between the top of the canvas and the status line,
-        # capped by width, so it fills the HUD at any window size — including
-        # fullscreen — without ever colliding with the status text below.
         _sy_status = cy + fw * 0.40
+        _band_t = 12.0
+        _band_h = max(60.0, _sy_status - 12.0 - _band_t)
+        _r = min(W * 0.46, _band_h / 2.0)
+
+        # ── Visualizer Centrepiece Mode ──────────────────────────────────────
         if self._avatar is not None and self.hud_style == "face":
-            _band_t = 12.0
-            _band_h = max(60.0, _sy_status - 12.0 - _band_t)
             _r_head = min(fw * 0.355, _band_h / (self._avatar.SPAN + 0.08))
             _head_cy = _band_t + (_band_h - self._avatar.SPAN * _r_head) / 2.0 + _r_head
 
             if self.muted:
                 _main = _acc = qcol(C.MUTED_C)
             else:
-                _main = qcol(C.PRI)
+                # Recolor 3D low-poly face to warm brass surface facets + holographic teal wireframe
+                _main = qcol(getattr(C, "BRASS", "#d4af37"))
                 if self.speaking:
                     _acc = qcol(C.ACC)
                 elif self.state in ("THINKING", "PROCESSING"):
                     _acc = qcol(C.ACC2)
                 elif self.state == "LISTENING":
-                    _acc = qcol(C.GREEN)
+                    _acc = qcol(C.PRI)
                 else:
                     _acc = qcol(C.PRI)
             self._avatar.paint(p, cx, _head_cy, _r_head, _main, _acc, qcol(C.BG))
-
-        # reactor core — the other centrepiece, and the fallback if the head
-        # could not be built. There is no third path: the old face.png branch
-        # was unreachable (no such file ships) and the bare orb it fell through
-        # to is what this replaces.
+        elif self.hud_style == "quantum":
+            self._paint_quantum(p, cx, _band_t + _band_h / 2.0, _r, W, _band_h)
+        elif self.hud_style == "neural":
+            self._paint_neural(p, cx, _band_t + _band_h / 2.0, _r, W, _band_h)
         else:
-            _band_t = 12.0
-            _band_h = max(60.0, _sy_status - 12.0 - _band_t)
-            _r = min(W * 0.46, _band_h / 2.0)
             self._paint_core(p, cx, _band_t + _band_h / 2.0, _r, W, _band_h)
 
         # status text
@@ -948,8 +1245,17 @@ class MetricBar(QWidget):
         self._color = color
         self._value = 0.0       # 0–100
         self._text  = "--"
+        self._hovered = False
         self.setFixedHeight(38)
         self.setMinimumWidth(80)
+
+    def enterEvent(self, _):
+        self._hovered = True
+        self.update()
+
+    def leaveEvent(self, _):
+        self._hovered = False
+        self.update()
 
     def set_value(self, pct: float, text: str):
         v = max(0.0, min(100.0, pct))
@@ -966,9 +1272,13 @@ class MetricBar(QWidget):
         p.setRenderHint(QPainter.RenderHint.Antialiasing)
         W, H = self.width(), self.height()
 
+        # Frosted glass panel with warm amber/gold border on hover/active
         p.setBrush(QBrush(qcol(C.PANEL2)))
-        p.setPen(QPen(qcol(C.BORDER_A), 1))
-        p.drawRoundedRect(QRectF(1, 1, W - 2, H - 2), 4, 4)
+        if getattr(self, '_hovered', False) or self._value > 75:
+            p.setPen(QPen(qcol(getattr(C, 'ACC', '#ffaa22')), 1.5))
+        else:
+            p.setPen(QPen(qcol(getattr(C, 'BORDER', '#3a321a')), 1))
+        p.drawRoundedRect(QRectF(1, 1, W - 2, H - 2), 5, 5)
 
         bar_h   = 4
         bar_y   = H - bar_h - 5
@@ -1062,7 +1372,8 @@ class LogWidget(QTextEdit):
         if   tl.startswith("you:"):                              self._tag = "you"
         elif tl.startswith(_ai_pfx) or tl.startswith("jarvis:"): self._tag = "ai"
         elif tl.startswith("file:"):                             self._tag = "file"
-        elif "err" in tl:                                        self._tag = "err"
+        elif "err" in tl or "fail" in tl:                        self._tag = "err"
+        elif "warn" in tl or "alert" in tl:                      self._tag = "warn"
         else:                                                    self._tag = "sys"
         self._tmr.start(6)
 
@@ -1075,13 +1386,9 @@ class LogWidget(QTextEdit):
                 "you":  qcol(C.WHITE),
                 "ai":   qcol(C.PRI),
                 "err":  qcol(C.RED),
+                "warn": qcol(getattr(C, "ACC", "#ffaa22")),
                 "file": qcol(C.GREEN),
-                # SYS lines are the bulk of the log. Amber fought the cyan HUD
-                # and, being a fixed status colour rather than a hue-linked one,
-                # stayed amber even after the accent picker retinted everything
-                # else. TEXT_MED follows the theme and drops the contrast to a
-                # level you can read past.
-                "sys":  qcol(C.TEXT_MED),
+                "sys":  qcol(C.TEXT),
             }.get(self._tag, qcol(C.TEXT))
             fmt.setForeground(QBrush(col))
             cur.movePosition(cur.MoveOperation.End)
@@ -1613,223 +1920,687 @@ class HueWheel(QWidget):
             self.hue_committed.emit(self.color())
 
 
-class CustomizeOverlay(QWidget):
-    """Floating overlay — change assistant name, user name, UI colour and voice."""
 
-    saved = pyqtSignal(str, str, str, str)   # assistant_name, user_name, ui_color, voice
-    _OW, _OH = 400, 588
+# Re-export presets from theme.py (Strictly NO purple anywhere)
+from theme import THEME_PRESETS as _THEME_PRESETS, HUD_PRESETS as _HUD_PRESETS, LAYOUT_PRESETS as _LAYOUT_PRESETS
+
+
+class CustomizeOverlay(QWidget):
+    """Floating overlay — Holographic Brass & Deep Ocean UI makeover:
+    All settings arranged in ONE unified view with ZERO scrollbars/sliders."""
+
+    saved = pyqtSignal(str, str, str, str, str, str)   # assistant_name, user_name, ui_color, voice, hud_style, layout_mode
+    _OW, _OH = 860, 520
 
     def __init__(self, assistant_name="JARVIS", user_name="",
-                 ui_color=DEFAULT_UI_COLOR, voice="", parent=None):
+                 ui_color=DEFAULT_UI_COLOR, voice="",
+                 hud_style="face", layout_mode="tactical", parent=None):
         super().__init__(parent)
         self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
-        self.setStyleSheet(f"""
-            CustomizeOverlay {{
-                background: rgba(0, 6, 10, 245);
-                border: 1px solid {C.BORDER_B};
-                border-radius: 6px;
-            }}
-        """)
-        lay = QVBoxLayout(self)
-        lay.setContentsMargins(24, 18, 24, 18)
-        lay.setSpacing(8)
-
-        def _lbl(txt, fs=9, bold=False, color=C.PRI, align=Qt.AlignmentFlag.AlignCenter):
-            w = QLabel(txt); w.setAlignment(align)
-            w.setFont(QFont("Courier New", fs,
-                            QFont.Weight.Bold if bold else QFont.Weight.Normal))
-            w.setStyleSheet(f"color: {color}; background: transparent;")
-            return w
-
-        _fs = (f"QLineEdit {{ background: #000d12; color: {C.TEXT}; "
-               f"border: 1px solid {C.BORDER}; border-radius: 3px; padding: 4px 8px; }}"
-               f"QLineEdit:focus {{ border: 1px solid {C.PRI}; }}")
-
-        lay.addWidget(_lbl("⚙  CUSTOMISE ASSISTANT", 12, True))
-        sep = QFrame(); sep.setFrameShape(QFrame.Shape.HLine)
-        sep.setStyleSheet(f"color: {C.BORDER}; margin: 2px 0;")
-        lay.addWidget(sep)
-
-        lay.addWidget(_lbl("ASSISTANT NAME", 8, color=C.TEXT_DIM,
-                            align=Qt.AlignmentFlag.AlignLeft))
-        self._name_input = QLineEdit(assistant_name)
-        self._name_input.setFont(QFont("Courier New", 10))
-        self._name_input.setFixedHeight(32)
-        self._name_input.setStyleSheet(_fs)
-        lay.addWidget(self._name_input)
-
-        lay.addSpacing(4)
-        lay.addWidget(_lbl("YOUR NAME  (leave blank for default sir / efendim)", 8,
-                            color=C.TEXT_DIM, align=Qt.AlignmentFlag.AlignLeft))
-        self._user_input = QLineEdit(user_name)
-        self._user_input.setPlaceholderText("e.g.  Tony   (leave blank for auto)")
-        self._user_input.setFont(QFont("Courier New", 10))
-        self._user_input.setFixedHeight(32)
-        self._user_input.setStyleSheet(_fs)
-        lay.addWidget(self._user_input)
-
-        # ── Assistant voice — Gemini prebuilt voices ─────────────────────────
-        # Names are language-neutral proper nouns, so the row reads the same in
-        # every locale. Selecting one and applying rebuilds the Live session.
-        from memory.config_manager import AVAILABLE_VOICES, DEFAULT_VOICE
-        lay.addSpacing(4)
-        lay.addWidget(_lbl("ASSISTANT VOICE", 8, color=C.TEXT_DIM,
-                            align=Qt.AlignmentFlag.AlignLeft))
-        self._sel_voice   = (voice or DEFAULT_VOICE)
-        if self._sel_voice not in AVAILABLE_VOICES:
-            self._sel_voice = DEFAULT_VOICE
-        self._voice_btns: dict[str, QPushButton] = {}
-        voice_row = QHBoxLayout(); voice_row.setSpacing(4)
-        for _v in AVAILABLE_VOICES:
-            b = QPushButton(_v)
-            b.setCheckable(True)
-            b.setFixedHeight(28)
-            b.setFont(QFont("Courier New", 8, QFont.Weight.Bold))
-            b.setCursor(Qt.CursorShape.PointingHandCursor)
-            b.clicked.connect(lambda _=False, name=_v: self._on_voice_pick(name))
-            self._voice_btns[_v] = b
-            voice_row.addWidget(b)
-        lay.addLayout(voice_row)
-        self._refresh_voice_btns()
-
-        # ── UI colour — colour wheel ─────────────────────────────────────────
-        lay.addSpacing(4)
-        clr_hdr = QHBoxLayout()
-        clr_hdr.addWidget(_lbl("UI COLOUR  —  drag the handle", 8,
-                               color=C.TEXT_DIM, align=Qt.AlignmentFlag.AlignLeft))
-        clr_hdr.addStretch()
-        df_btn = QPushButton("DEFAULT")
-        df_btn.setFixedSize(64, 20)
-        df_btn.setFont(QFont("Courier New", 7, QFont.Weight.Bold))
-        df_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        df_btn.setStyleSheet(f"""
-            QPushButton {{
-                background: transparent; color: {C.TEXT_MED};
-                border: 1px solid {C.BORDER}; border-radius: 3px;
-            }}
-            QPushButton:hover {{ color: {C.TEXT}; border-color: {C.BORDER_B}; }}
-        """)
-        df_btn.clicked.connect(lambda: self._set_color(DEFAULT_UI_COLOR))
-        clr_hdr.addWidget(df_btn)
-        lay.addLayout(clr_hdr)
-
         self._initial_color = (ui_color or DEFAULT_UI_COLOR).strip().lower()
         self._sel_color     = self._initial_color
-        self.on_preview     = None   # callable(hex) — live preview; MainWindow wires it
+        self._initial_hud_style = hud_style or "face"
+        self._sel_hud_style     = self._initial_hud_style
+        self._initial_layout_mode = layout_mode or "tactical"
+        self._sel_layout_mode     = self._initial_layout_mode
 
-        self._wheel = HueWheel(self._sel_color)
-        wheel_row = QHBoxLayout()
-        wheel_row.addStretch(); wheel_row.addWidget(self._wheel); wheel_row.addStretch()
-        lay.addLayout(wheel_row)
-        self._wheel.hue_picked.connect(self._on_wheel_pick)
-        self._wheel.hue_committed.connect(self._on_wheel_commit)
+        self.on_preview        = None   # callable(hex) — live preview
+        self.on_preview_hud    = None   # callable(hud_style)
+        self.on_preview_layout = None   # callable(layout_mode)
 
+        # Frosted glassmorphism modal with glowing brass/gold border
+        self.setStyleSheet(f"""
+            CustomizeOverlay {{
+                background: rgba(3, 14, 26, 0.97);
+                border: 1.5px solid rgba(212, 175, 55, 0.65);
+                border-radius: 10px;
+            }}
+        """)
+
+        # Main Layout — fits completely in ONE screen with ZERO scrollbars
+        main_lay = QVBoxLayout(self)
+        main_lay.setContentsMargins(14, 12, 14, 12)
+        main_lay.setSpacing(8)
+
+        # ── Header ──────────────────────────────────────────────────────────
+        hdr_row = QHBoxLayout()
+        title_lbl = QLabel("⚙  CUSTOMISE ASSISTANT & UI MAKEOVER")
+        title_lbl.setFont(QFont("Courier New", 10, QFont.Weight.Bold))
+        title_lbl.setStyleSheet("color: #f0c544; background: transparent;")
+        hdr_row.addWidget(title_lbl)
+
+        badge_lbl = QLabel("[ HOLOGRAPHIC BRASS & DEEP OCEAN ]")
+        badge_lbl.setFont(QFont("Courier New", 7, QFont.Weight.Bold))
+        badge_lbl.setStyleSheet("color: #00e5ff; background: transparent;")
+        hdr_row.addWidget(badge_lbl)
+        hdr_row.addStretch()
+
+        close_btn = QPushButton("✕")
+        close_btn.setFixedSize(22, 22)
+        close_btn.setFont(QFont("Courier New", 8, QFont.Weight.Bold))
+        close_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        close_btn.setStyleSheet("""
+            QPushButton { background: transparent; color: #6ab8cc; border: 1px solid rgba(212, 175, 55, 0.3); border-radius: 3px; }
+            QPushButton:hover { background: rgba(255, 77, 109, 0.2); color: #ff4d6d; border-color: #ff4d6d; }
+        """)
+        close_btn.clicked.connect(self._cancel)
+        hdr_row.addWidget(close_btn)
+        main_lay.addLayout(hdr_row)
+
+        sep0 = QFrame(); sep0.setFrameShape(QFrame.Shape.HLine)
+        sep0.setStyleSheet("color: rgba(212, 175, 55, 0.35); margin: 0;")
+        main_lay.addWidget(sep0)
+
+        # ── Columns Container (Left: Visuals & Identity, Right: Voice & Persona) ──
+        cols_lay = QHBoxLayout()
+        cols_lay.setSpacing(12)
+
+        _fs = ("QLineEdit { background: rgba(2, 11, 20, 0.90); color: #8ffcff; "
+               "border: 1px solid rgba(212, 175, 55, 0.35); border-radius: 4px; padding: 2px 6px; } "
+               "QLineEdit:focus { border: 1px solid #00e5ff; background: rgba(2, 14, 26, 0.98); }")
+
+        def _card_panel():
+            f = QFrame()
+            f.setStyleSheet("""
+                QFrame {
+                    background: rgba(4, 18, 30, 0.78);
+                    border: 1px solid rgba(212, 175, 55, 0.28);
+                    border-radius: 8px;
+                }
+            """)
+            return f
+
+        def _sub_lbl(txt, color="#d4af37"):
+            w = QLabel(txt)
+            w.setFont(QFont("Courier New", 7, QFont.Weight.Bold))
+            w.setStyleSheet(f"color: {color}; background: transparent; letter-spacing: 1px;")
+            return w
+
+        # ======================================================================
+        # LEFT CARD: Identity, Visualizer Animation, Layout, Themes
+        # ======================================================================
+        left_card = _card_panel()
+        left_lay = QVBoxLayout(left_card)
+        left_lay.setContentsMargins(10, 8, 10, 8)
+        left_lay.setSpacing(6)
+
+        left_lay.addWidget(_sub_lbl("◈  IDENTITY & CALLSIGN"))
+
+        names_row = QHBoxLayout(); names_row.setSpacing(6)
+        n1_col = QVBoxLayout(); n1_col.setSpacing(2)
+        n1_col.addWidget(QLabel("ASSISTANT NAME", font=QFont("Courier New", 6), styleSheet="color: #4a7d90;"))
+        self._name_input = QLineEdit(assistant_name)
+        self._name_input.setFont(QFont("Courier New", 8))
+        self._name_input.setFixedHeight(24)
+        self._name_input.setStyleSheet(_fs)
+        n1_col.addWidget(self._name_input)
+        names_row.addLayout(n1_col, stretch=1)
+
+        n2_col = QVBoxLayout(); n2_col.setSpacing(2)
+        n2_col.addWidget(QLabel("YOUR CALLSIGN (SIR / NAME)", font=QFont("Courier New", 6), styleSheet="color: #4a7d90;"))
+        self._user_input = QLineEdit(user_name)
+        self._user_input.setPlaceholderText("sir")
+        self._user_input.setFont(QFont("Courier New", 8))
+        self._user_input.setFixedHeight(24)
+        self._user_input.setStyleSheet(_fs)
+        n2_col.addWidget(self._user_input)
+        names_row.addLayout(n2_col, stretch=1)
+        left_lay.addLayout(names_row)
+
+        # AI Visualizer
+        left_lay.addWidget(_sub_lbl("◈  AI VISUALIZER ANIMATION"))
+        self._hud_btns: dict[str, QPushButton] = {}
+        hud_row1 = QHBoxLayout(); hud_row1.setSpacing(4)
+        hud_row2 = QHBoxLayout(); hud_row2.setSpacing(4)
+        for idx, (htitle, hmode) in enumerate(_HUD_PRESETS):
+            b = QPushButton(htitle)
+            b.setCheckable(True)
+            b.setFixedHeight(24)
+            b.setFont(QFont("Courier New", 7, QFont.Weight.Bold))
+            b.setCursor(Qt.CursorShape.PointingHandCursor)
+            b.clicked.connect(lambda _=False, m=hmode: self._on_hud_pick(m))
+            self._hud_btns[hmode] = b
+            if idx < 2:
+                hud_row1.addWidget(b)
+            else:
+                hud_row2.addWidget(b)
+        left_lay.addLayout(hud_row1)
+        left_lay.addLayout(hud_row2)
+        self._refresh_hud_btns()
+
+        # UI Layout Mode
+        left_lay.addWidget(_sub_lbl("◈  UI LAYOUT MODE"))
+        self._layout_btns: dict[str, QPushButton] = {}
+        layout_row = QHBoxLayout(); layout_row.setSpacing(4)
+        for ltitle, lmode in _LAYOUT_PRESETS:
+            b = QPushButton(ltitle)
+            b.setCheckable(True)
+            b.setFixedHeight(24)
+            b.setFont(QFont("Courier New", 7, QFont.Weight.Bold))
+            b.setCursor(Qt.CursorShape.PointingHandCursor)
+            b.clicked.connect(lambda _=False, m=lmode: self._on_layout_pick(m))
+            self._layout_btns[lmode] = b
+            layout_row.addWidget(b)
+        left_lay.addLayout(layout_row)
+        self._refresh_layout_btns()
+
+        # Theme Presets (Strictly NO Purple)
+        left_lay.addWidget(_sub_lbl("◈  THEME PRESETS (HOLOGRAPHIC PALETTES)"))
+        self._theme_btns: dict[str, QPushButton] = {}
+        t_row1 = QHBoxLayout(); t_row1.setSpacing(4)
+        t_row2 = QHBoxLayout(); t_row2.setSpacing(4)
+        for idx, (tname, thex) in enumerate(_THEME_PRESETS):
+            b = QPushButton(tname)
+            b.setCheckable(True)
+            b.setFixedHeight(22)
+            b.setFont(QFont("Courier New", 7, QFont.Weight.Bold))
+            b.setCursor(Qt.CursorShape.PointingHandCursor)
+            b.clicked.connect(lambda _=False, h=thex: self._on_theme_pick(h))
+            self._theme_btns[thex] = b
+            if idx < 3:
+                t_row1.addWidget(b)
+            else:
+                t_row2.addWidget(b)
+        left_lay.addLayout(t_row1)
+        left_lay.addLayout(t_row2)
+        self._refresh_theme_btns()
+
+        # Custom Accent Color
+        left_lay.addWidget(_sub_lbl("◈  CUSTOM ACCENT COLOR"))
+        accent_row = QHBoxLayout(); accent_row.setSpacing(4)
+
+        swatches = [
+            ("#d4af37", "Gold"),
+            ("#00e5ff", "Teal"),
+            ("#ffaa22", "Amber"),
+            ("#f0c544", "Brass"),
+            ("#8899aa", "Silver"),
+            ("#00b4d8", "Marine"),
+        ]
+        for sw_hex, sw_tip in swatches:
+            sb = QPushButton()
+            sb.setFixedSize(18, 18)
+            sb.setToolTip(sw_tip)
+            sb.setCursor(Qt.CursorShape.PointingHandCursor)
+            sb.setStyleSheet(f"background: {sw_hex}; border: 1px solid rgba(255,255,255,0.4); border-radius: 9px;")
+            sb.clicked.connect(lambda _=False, h=sw_hex: self._set_color(h))
+            accent_row.addWidget(sb)
+
+        accent_row.addSpacing(6)
         self._hex_input = QLineEdit(self._sel_color)
-        self._hex_input.setPlaceholderText("#00d4ff   (custom hex colour)")
-        self._hex_input.setFont(QFont("Courier New", 10))
-        self._hex_input.setFixedHeight(28)
+        self._hex_input.setPlaceholderText("#00e5ff")
+        self._hex_input.setFont(QFont("Courier New", 8))
+        self._hex_input.setFixedHeight(24)
         self._hex_input.setStyleSheet(_fs)
         self._hex_input.textEdited.connect(self._on_hex_edited)
-        lay.addWidget(self._hex_input)
+        accent_row.addWidget(self._hex_input, stretch=1)
 
-        lay.addSpacing(6)
-        btn_row = QHBoxLayout(); btn_row.setSpacing(8)
-
-        save_btn = QPushButton("▸  APPLY CHANGES")
-        save_btn.setFixedHeight(34)
-        save_btn.setFont(QFont("Courier New", 9, QFont.Weight.Bold))
-        save_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        save_btn.setStyleSheet(f"""
-            QPushButton {{
-                background: transparent; color: {C.PRI};
-                border: 1px solid {C.PRI_DIM}; border-radius: 3px;
-            }}
-            QPushButton:hover {{ background: {C.PRI_GHO}; border: 1px solid {C.PRI}; }}
+        df_btn = QPushButton("DEFAULT")
+        df_btn.setFixedSize(58, 24)
+        df_btn.setFont(QFont("Courier New", 6, QFont.Weight.Bold))
+        df_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        df_btn.setStyleSheet("""
+            QPushButton { background: transparent; color: #6ab8cc; border: 1px solid rgba(212,175,55,0.3); border-radius: 3px; }
+            QPushButton:hover { color: #f0c544; border-color: #f0c544; }
         """)
-        save_btn.clicked.connect(self._save)
-        btn_row.addWidget(save_btn)
+        df_btn.clicked.connect(lambda: self._set_color(DEFAULT_UI_COLOR))
+        accent_row.addWidget(df_btn)
+        left_lay.addLayout(accent_row)
+
+        cols_lay.addWidget(left_card, stretch=1)
+
+        # ======================================================================
+        # RIGHT CARD: Assistant Voice & Persona
+        # ======================================================================
+        right_card = _card_panel()
+        right_lay = QVBoxLayout(right_card)
+        right_lay.setContentsMargins(10, 8, 10, 8)
+        right_lay.setSpacing(6)
+
+        v_hdr = QHBoxLayout()
+        v_hdr.addWidget(_sub_lbl("✦  ASSISTANT VOICE & PERSONA"))
+        v_hdr.addStretch()
+
+        self._add_voice_btn = QPushButton("+ CUSTOM")
+        self._add_voice_btn.setFixedSize(65, 20)
+        self._add_voice_btn.setFont(QFont("Courier New", 6, QFont.Weight.Bold))
+        self._add_voice_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._add_voice_btn.setStyleSheet("""
+            QPushButton { background: rgba(0, 229, 255, 0.12); color: #00e5ff; border: 1px solid rgba(0, 229, 255, 0.4); border-radius: 3px; }
+            QPushButton:hover { background: #00e5ff; color: #000; }
+        """)
+        self._add_voice_btn.clicked.connect(self._toggle_custom_voice_box)
+        v_hdr.addWidget(self._add_voice_btn)
+        right_lay.addLayout(v_hdr)
+
+        from memory.config_manager import DEFAULT_VOICE, get_available_voices
+        self._sel_voice = (voice or DEFAULT_VOICE)
+        if self._sel_voice not in get_available_voices():
+            self._sel_voice = DEFAULT_VOICE
+
+        self._voice_btns: dict[str, QPushButton] = {}
+        self._voice_container_lay = QVBoxLayout()
+        self._voice_container_lay.setSpacing(4)
+        right_lay.addLayout(self._voice_container_lay)
+
+        # Voice Tone Presets Chips
+        right_lay.addWidget(_sub_lbl("◈  VOICE TONE / PERSONA PRESET CHIPS", "#00e5ff"))
+        tone_chips_row = QHBoxLayout(); tone_chips_row.setSpacing(4)
+        tone_presets = [
+            ("Cute & Caring", "kavya"),
+            ("Romantic Warm", "XG"),
+            ("Intimate Seductive", "Tiara"),
+            ("Formal Butler", "Charon"),
+            ("Crisp Balanced", "Kore"),
+        ]
+        for t_label, v_assoc in tone_presets:
+            tb = QPushButton(f"[{t_label}]")
+            tb.setFixedHeight(22)
+            tb.setFont(QFont("Courier New", 6, QFont.Weight.Bold))
+            tb.setCursor(Qt.CursorShape.PointingHandCursor)
+            tb.setStyleSheet("""
+                QPushButton { background: rgba(212, 175, 55, 0.08); color: #8ffcff; border: 1px solid rgba(212, 175, 55, 0.25); border-radius: 4px; padding: 0 4px; }
+                QPushButton:hover { background: rgba(212, 175, 55, 0.25); color: #f0c544; border-color: #f0c544; }
+            """)
+            tb.clicked.connect(lambda _=False, v=v_assoc: self._on_voice_pick(v))
+            tone_chips_row.addWidget(tb)
+        right_lay.addLayout(tone_chips_row)
+
+        # Active Voice Information Mini-Card
+        self._cv_info_box = QFrame()
+        self._cv_info_box.setStyleSheet("""
+            QFrame {
+                background: rgba(2, 12, 22, 0.85);
+                border: 1px dashed rgba(212, 175, 55, 0.45);
+                border-radius: 6px;
+                padding: 4px;
+            }
+        """)
+        cv_info_lay = QVBoxLayout(self._cv_info_box)
+        cv_info_lay.setContentsMargins(6, 4, 6, 4)
+        cv_info_lay.setSpacing(2)
+        self._cv_info_lbl = QLabel()
+        self._cv_info_lbl.setFont(QFont("Courier New", 7))
+        self._cv_info_lbl.setWordWrap(True)
+        self._cv_info_lbl.setStyleSheet("color: #8ffcff; background: transparent;")
+        cv_info_lay.addWidget(self._cv_info_lbl)
+
+        # Test Voice / Remove Row
+        cv_tools_row = QHBoxLayout()
+        cv_tools_row.setSpacing(6)
+        self._cv_test_active_btn = QPushButton("▶ TEST")
+        self._cv_test_active_btn.setFixedHeight(20)
+        self._cv_test_active_btn.setFont(QFont("Courier New", 6, QFont.Weight.Bold))
+        self._cv_test_active_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._cv_test_active_btn.setStyleSheet("""
+            QPushButton { background: rgba(0, 229, 255, 0.12); color: #00e5ff; border: 1px solid #00e5ff; border-radius: 3px; padding: 0 6px; }
+            QPushButton:hover { background: #00e5ff; color: #000; }
+        """)
+        self._cv_test_active_btn.clicked.connect(self._test_active_custom_voice)
+        cv_tools_row.addWidget(self._cv_test_active_btn)
+
+        self._cv_del_btn = QPushButton("🗑 REMOVE")
+        self._cv_del_btn.setFixedHeight(20)
+        self._cv_del_btn.setFont(QFont("Courier New", 6, QFont.Weight.Bold))
+        self._cv_del_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._cv_del_btn.setStyleSheet("""
+            QPushButton { background: rgba(255, 77, 109, 0.15); color: #ff6688; border: 1px solid #ff4d6d; border-radius: 3px; padding: 0 6px; }
+            QPushButton:hover { background: #ff4d6d; color: #fff; }
+        """)
+        self._cv_del_btn.clicked.connect(self._on_delete_custom_voice)
+        cv_tools_row.addWidget(self._cv_del_btn)
+        cv_tools_row.addStretch()
+
+        self._cv_active_test_status_lbl = QLabel()
+        self._cv_active_test_status_lbl.setFont(QFont("Courier New", 6))
+        self._cv_active_test_status_lbl.setStyleSheet("color: #4a7d90; background: transparent;")
+        cv_tools_row.addWidget(self._cv_active_test_status_lbl)
+
+        cv_info_lay.addLayout(cv_tools_row)
+        right_lay.addWidget(self._cv_info_box)
+
+        # Expandable Custom Voice Creator Box
+        self._custom_voice_box = QFrame()
+        self._custom_voice_box.setStyleSheet("""
+            QFrame { background: rgba(2, 14, 26, 0.95); border: 1px solid #00e5ff; border-radius: 6px; }
+        """)
+        self._custom_voice_box.setVisible(False)
+        cv_form_lay = QVBoxLayout(self._custom_voice_box)
+        cv_form_lay.setContentsMargins(6, 6, 6, 6)
+        cv_form_lay.setSpacing(4)
+
+        cv_form_lay.addWidget(_sub_lbl("✦ CREATE CUSTOM ASSISTANT VOICE"))
+        self._cv_name_input = QLineEdit()
+        self._cv_name_input.setPlaceholderText("Voice Name (e.g. Jarvis Mk2, Friday)")
+        self._cv_name_input.setFixedHeight(22)
+        self._cv_name_input.setFont(QFont("Courier New", 7))
+        self._cv_name_input.setStyleSheet(_fs)
+        cv_form_lay.addWidget(self._cv_name_input)
+
+        cv_act_row = QHBoxLayout()
+        save_cv_btn = QPushButton("✓ SAVE VOICE")
+        save_cv_btn.setFixedHeight(22)
+        save_cv_btn.setFont(QFont("Courier New", 7, QFont.Weight.Bold))
+        save_cv_btn.setStyleSheet("""
+            QPushButton { background: rgba(0, 229, 255, 0.2); color: #00e5ff; border: 1px solid #00e5ff; border-radius: 3px; }
+            QPushButton:hover { background: #00e5ff; color: #000; }
+        """)
+        save_cv_btn.clicked.connect(self._on_save_custom_voice)
+        cv_act_row.addWidget(save_cv_btn)
+
+        cancel_cv_btn = QPushButton("CANCEL")
+        cancel_cv_btn.setFixedHeight(22)
+        cancel_cv_btn.setFont(QFont("Courier New", 7))
+        cancel_cv_btn.setStyleSheet("""
+            QPushButton { background: transparent; color: #6ab8cc; border: 1px solid rgba(212,175,55,0.3); border-radius: 3px; }
+            QPushButton:hover { color: #fff; }
+        """)
+        cancel_cv_btn.clicked.connect(self._toggle_custom_voice_box)
+        cv_act_row.addWidget(cancel_cv_btn)
+        cv_form_lay.addLayout(cv_act_row)
+        right_lay.addWidget(self._custom_voice_box)
+
+        cols_lay.addWidget(right_card, stretch=1)
+        main_lay.addLayout(cols_lay, stretch=1)
+
+        # ── Bottom Action Buttons ─────────────────────────────────────────────
+        btn_row = QHBoxLayout(); btn_row.setSpacing(10)
+        btn_row.addStretch()
 
         cancel_btn = QPushButton("CANCEL")
-        cancel_btn.setFixedHeight(34)
-        cancel_btn.setFont(QFont("Courier New", 9))
+        cancel_btn.setFixedSize(110, 32)
+        cancel_btn.setFont(QFont("Courier New", 8, QFont.Weight.Bold))
         cancel_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        cancel_btn.setStyleSheet(f"""
-            QPushButton {{
-                background: transparent; color: {C.TEXT_MED};
-                border: 1px solid {C.BORDER}; border-radius: 3px;
-            }}
-            QPushButton:hover {{ color: {C.TEXT}; border-color: {C.BORDER_B}; }}
+        cancel_btn.setStyleSheet("""
+            QPushButton {
+                background: rgba(4, 18, 30, 0.70);
+                color: #6ab8cc;
+                border: 1px solid rgba(212, 175, 55, 0.35);
+                border-radius: 5px;
+            }
+            QPushButton:hover {
+                background: rgba(212, 175, 55, 0.15);
+                color: #ffffff;
+                border-color: rgba(212, 175, 55, 0.65);
+            }
         """)
         cancel_btn.clicked.connect(self._cancel)
         btn_row.addWidget(cancel_btn)
-        lay.addLayout(btn_row)
 
-    # ── voice selection ──────────────────────────────────────────────────────
+        save_btn = QPushButton("▸  APPLY CHANGES")
+        save_btn.setFixedSize(170, 32)
+        save_btn.setFont(QFont("Courier New", 8, QFont.Weight.Bold))
+        save_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        save_btn.setStyleSheet("""
+            QPushButton {
+                background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 rgba(212, 175, 55, 0.30), stop:1 rgba(0, 229, 255, 0.25));
+                color: #f0c544;
+                border: 1.5px solid #d4af37;
+                border-radius: 5px;
+            }
+            QPushButton:hover {
+                background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 rgba(212, 175, 55, 0.55), stop:1 rgba(0, 229, 255, 0.45));
+                border-color: #f0c544;
+                color: #ffffff;
+            }
+        """)
+        save_btn.clicked.connect(self._save)
+        btn_row.addWidget(save_btn)
+        main_lay.addLayout(btn_row)
+
+        self._rebuild_voice_pills()
+
+    # ── hud visualizer selection ──────────────────────────────────────────────
+    def _on_hud_pick(self, mode: str):
+        self._sel_hud_style = mode
+        self._refresh_hud_btns()
+        if self.on_preview_hud:
+            self.on_preview_hud(mode)
+
+    def _refresh_hud_btns(self):
+        for mode, b in self._hud_btns.items():
+            on = (mode == self._sel_hud_style)
+            b.setChecked(on)
+            if on:
+                b.setStyleSheet("""
+                    QPushButton { background: rgba(0, 229, 255, 0.20); color: #00e5ff;
+                        border: 1px solid #00e5ff; border-radius: 4px; }
+                """)
+            else:
+                b.setStyleSheet("""
+                    QPushButton { background: rgba(4, 18, 30, 0.60); color: #6ab8cc;
+                        border: 1px solid rgba(212, 175, 55, 0.25); border-radius: 4px; }
+                    QPushButton:hover { color: #f0c544; border-color: rgba(212, 175, 55, 0.55); }
+                """)
+
+    # ── layout selection ──────────────────────────────────────────────────────
+    def _on_layout_pick(self, mode: str):
+        self._sel_layout_mode = mode
+        self._refresh_layout_btns()
+        if self.on_preview_layout:
+            self.on_preview_layout(mode)
+
+    def _refresh_layout_btns(self):
+        for mode, b in self._layout_btns.items():
+            on = (mode == self._sel_layout_mode)
+            b.setChecked(on)
+            if on:
+                b.setStyleSheet("""
+                    QPushButton { background: rgba(212, 175, 55, 0.22); color: #f0c544;
+                        border: 1px solid #d4af37; border-radius: 4px; }
+                """)
+            else:
+                b.setStyleSheet("""
+                    QPushButton { background: rgba(4, 18, 30, 0.60); color: #6ab8cc;
+                        border: 1px solid rgba(212, 175, 55, 0.25); border-radius: 4px; }
+                    QPushButton:hover { color: #f0c544; border-color: rgba(212, 175, 55, 0.55); }
+                """)
+
+    # ── voice selection ───────────────────────────────────────────────────────
+    def _toggle_custom_voice_box(self):
+        vis = not self._custom_voice_box.isVisible()
+        self._custom_voice_box.setVisible(vis)
+        self._add_voice_btn.setText("▲ CLOSE" if vis else "+ CUSTOM")
+
+    def _on_save_custom_voice(self):
+        name = self._cv_name_input.text().strip()
+        if not name:
+            self._cv_name_input.setFocus()
+            return
+        from memory.config_manager import save_custom_voice
+        save_custom_voice(name, voice_type="gemini", base_voice="Aoede", persona="")
+        self._sel_voice = name
+        self._custom_voice_box.setVisible(False)
+        self._add_voice_btn.setText("+ CUSTOM")
+        self._cv_name_input.clear()
+        self._rebuild_voice_pills()
+
+    def _on_delete_custom_voice(self):
+        from memory.config_manager import delete_custom_voice, DEFAULT_VOICE
+        if delete_custom_voice(self._sel_voice):
+            self._sel_voice = DEFAULT_VOICE
+            self._rebuild_voice_pills()
+
     def _on_voice_pick(self, name: str):
         self._sel_voice = name
         self._refresh_voice_btns()
 
+    def _rebuild_voice_pills(self):
+        """Re-render voice buttons in clean rows: Permanent character voices on top, core timbres below."""
+        from memory.config_manager import get_available_voices
+        while self._voice_container_lay.count():
+            item = self._voice_container_lay.takeAt(0)
+            if item.widget():
+                item.widget().deleteLater()
+            elif item.layout():
+                while item.layout().count():
+                    child = item.layout().takeAt(0)
+                    if child.widget():
+                        child.widget().deleteLater()
+
+        self._voice_btns.clear()
+
+        # Row 1: Permanent Character Voices (Featured First Class)
+        lbl_p = QLabel("PERMANENT GIRLFRIEND & COMPANION VOICES (NATIVE GEMINI)")
+        lbl_p.setFont(QFont("Courier New", 6, QFont.Weight.Bold))
+        lbl_p.setStyleSheet("color: #d4af37; background: transparent;")
+        self._voice_container_lay.addWidget(lbl_p)
+
+        row_char = QHBoxLayout(); row_char.setSpacing(4)
+        for _v, _badge in [("kavya", "🌸 Kavya"), ("XG", "🔥 XG"), ("Tiara", "✨ Tiara")]:
+            b = QPushButton(_badge)
+            b.setCheckable(True)
+            b.setFixedHeight(24)
+            b.setFont(QFont("Courier New", 7, QFont.Weight.Bold))
+            b.setCursor(Qt.CursorShape.PointingHandCursor)
+            b.clicked.connect(lambda _=False, name=_v: self._on_voice_pick(name))
+            self._voice_btns[_v] = b
+            row_char.addWidget(b)
+        self._voice_container_lay.addLayout(row_char)
+
+        # Row 2: Standard Core Built-in Voices
+        lbl_c = QLabel("STANDARD CORE TIMBRES")
+        lbl_c.setFont(QFont("Courier New", 6, QFont.Weight.Bold))
+        lbl_c.setStyleSheet("color: #4a7d90; background: transparent; margin-top: 2px;")
+        self._voice_container_lay.addWidget(lbl_c)
+
+        row_builtin = QHBoxLayout(); row_builtin.setSpacing(4)
+        for _v in ("Charon", "Puck", "Kore", "Fenrir", "Aoede"):
+            b = QPushButton(_v)
+            b.setCheckable(True)
+            b.setFixedHeight(22)
+            b.setFont(QFont("Courier New", 6, QFont.Weight.Bold))
+            b.setCursor(Qt.CursorShape.PointingHandCursor)
+            b.clicked.connect(lambda _=False, name=_v: self._on_voice_pick(name))
+            self._voice_btns[_v] = b
+            row_builtin.addWidget(b)
+        self._voice_container_lay.addLayout(row_builtin)
+
+        # Extra customs (if any)
+        avail = get_available_voices()
+        extra_customs = [v for v in avail if v not in ("Charon", "Puck", "Kore", "Fenrir", "Aoede", "kavya", "XG", "Tiara")]
+        if extra_customs:
+            row_custom = QHBoxLayout(); row_custom.setSpacing(4)
+            for _v in extra_customs:
+                b = QPushButton(_v)
+                b.setCheckable(True)
+                b.setFixedHeight(22)
+                b.setFont(QFont("Courier New", 6, QFont.Weight.Bold))
+                b.setCursor(Qt.CursorShape.PointingHandCursor)
+                b.clicked.connect(lambda _=False, name=_v: self._on_voice_pick(name))
+                self._voice_btns[_v] = b
+                row_custom.addWidget(b)
+            self._voice_container_lay.addLayout(row_custom)
+
+        self._refresh_voice_btns()
+
     def _refresh_voice_btns(self):
-        """Highlight the selected voice pill; dim the rest."""
+        """Highlight active voice button and update info card."""
+        from memory.config_manager import get_custom_voice_info
         for name, b in self._voice_btns.items():
             on = (name == self._sel_voice)
             b.setChecked(on)
             if on:
-                b.setStyleSheet(f"""
-                    QPushButton {{ background: {C.PRI_GHO}; color: {C.PRI};
-                        border: 1px solid {C.PRI}; border-radius: 3px; }}
+                b.setStyleSheet("""
+                    QPushButton { background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 rgba(212, 175, 55, 0.35), stop:1 rgba(0, 229, 255, 0.30));
+                        color: #ffffff; border: 1.5px solid #00e5ff; border-radius: 4px; font-weight: bold; }
                 """)
             else:
-                b.setStyleSheet(f"""
-                    QPushButton {{ background: transparent; color: {C.TEXT_MED};
-                        border: 1px solid {C.BORDER}; border-radius: 3px; }}
-                    QPushButton:hover {{ color: {C.TEXT}; border-color: {C.BORDER_B}; }}
+                b.setStyleSheet("""
+                    QPushButton { background: rgba(4, 18, 30, 0.60); color: #8ffcff;
+                        border: 1px solid rgba(212, 175, 55, 0.25); border-radius: 4px; }
+                    QPushButton:hover { color: #f0c544; border-color: rgba(212, 175, 55, 0.6); }
                 """)
 
-    # ── colour flow ──────────────────────────────────────────────────────────
-    def _set_color(self, hx: str, update_wheel: bool = True, preview: bool = True):
-        """Updates the selected colour; hex box + wheel stay in sync, theme is live-previewed."""
+        info = get_custom_voice_info(self._sel_voice)
+        v_lower = self._sel_voice.lower()
+        if v_lower == "kavya":
+            txt = ("🌸 Kavya (Cute Caring Sweet Girlfriend)\n"
+                   "Real, interactive, and emotionally present — Kashvi persona.\n"
+                   "Permanent Native Gemini Acoustic (Aoede) • 0 ElevenLabs Connection.")
+        elif v_lower == "xg":
+            txt = ("🔥 XG (Warm Emotional Girlfriend)\n"
+                   "Romantic, devoted, naturally expressive — Deshna Sogam persona.\n"
+                   "Permanent Native Gemini Acoustic (Aoede) • 0 ElevenLabs Connection.")
+        elif v_lower == "tiara":
+            txt = ("✨ Tiara (Smooth, Soft and Seductive)\n"
+                   "Sweetness & husky depth, intimate and personal warmth.\n"
+                   "Permanent Native Gemini Acoustic (Kore) • 0 ElevenLabs Connection.")
+        elif info:
+            cat = info.get("voice_category", "Custom Voice")
+            base = info.get("base_voice", "Aoede")
+            txt = (f"🎙 ACTIVE: {self._sel_voice} ({cat}) | TIMBRE: {base}\n"
+                   "Native Gemini Engine • Permanent Storage.")
+        else:
+            txt = (f"🎙 ACTIVE: {self._sel_voice} (Built-in Gemini Acoustic Core)\n"
+                   "Direct low-latency speech synthesis.")
+
+        self._cv_info_lbl.setText(txt)
+        is_perm = v_lower in ("charon", "puck", "kore", "fenrir", "aoede", "kavya", "xg", "tiara")
+        self._cv_del_btn.setVisible(not is_perm)
+        self._cv_test_active_btn.setVisible(not is_perm)
+
+    def _test_active_custom_voice(self):
+        self._cv_active_test_status_lbl.setText("Native Gemini voices stream live during conversations.")
+
+    # ── theme preset selection ────────────────────────────────────────────────
+    def _on_theme_pick(self, hex_color: str):
+        self._set_color(hex_color)
+        self._refresh_theme_btns()
+
+    def _refresh_theme_btns(self):
+        if not hasattr(self, '_theme_btns'):
+            return
+        sel = (getattr(self, '_sel_color', "") or "").strip().lower()
+        for thex, b in self._theme_btns.items():
+            on = (thex.lower() == sel)
+            b.setChecked(on)
+            if on:
+                b.setStyleSheet("""
+                    QPushButton { background: rgba(0, 229, 255, 0.22); color: #00e5ff;
+                        border: 1.5px solid #00e5ff; border-radius: 4px; }
+                """)
+            else:
+                b.setStyleSheet("""
+                    QPushButton { background: rgba(4, 18, 30, 0.60); color: #6ab8cc;
+                        border: 1px solid rgba(212, 175, 55, 0.25); border-radius: 4px; }
+                    QPushButton:hover { color: #f0c544; border-color: rgba(212, 175, 55, 0.55); }
+                """)
+
+    def _set_color(self, hx: str, preview: bool = True):
         self._sel_color = hx.strip().lower()
         self._hex_input.blockSignals(True)
         self._hex_input.setText(self._sel_color)
         self._hex_input.blockSignals(False)
-        if update_wheel:
-            self._wheel.set_color(self._sel_color)
         if preview and self.on_preview:
             self.on_preview(self._sel_color)
-
-    def _on_wheel_pick(self, hx: str):
-        # While dragging: update the hex box, don't apply the theme yet
-        self._sel_color = hx
-        self._hex_input.blockSignals(True)
-        self._hex_input.setText(hx)
-        self._hex_input.blockSignals(False)
-
-    def _on_wheel_commit(self, hx: str):
-        # Handle released → live-preview the whole interface
-        self._set_color(hx, update_wheel=False)
+        if hasattr(self, '_theme_btns'):
+            self._refresh_theme_btns()
 
     def _on_hex_edited(self, text: str):
         t = text.strip().lower()
         if t.startswith("#") and len(t) == 7:
             try:
                 int(t[1:], 16)
+                self._set_color(t, preview=True)
             except ValueError:
-                return
-            self._set_color(t, update_wheel=True, preview=True)
+                pass
 
     def _cancel(self):
-        # If a preview was applied, revert to the colour from launch
         if self.on_preview and self._sel_color != self._initial_color:
             self.on_preview(self._initial_color)
+        if self.on_preview_hud and self._sel_hud_style != self._initial_hud_style:
+            self.on_preview_hud(self._initial_hud_style)
+        if self.on_preview_layout and self._sel_layout_mode != self._initial_layout_mode:
+            self.on_preview_layout(self._initial_layout_mode)
         self.hide()
 
     def _save(self):
         name = self._name_input.text().strip() or "JARVIS"
         user = self._user_input.text().strip()
-        self.saved.emit(name, user, self._sel_color or DEFAULT_UI_COLOR, self._sel_voice)
+        self.saved.emit(name, user, self._sel_color or DEFAULT_UI_COLOR,
+                        self._sel_voice, self._sel_hud_style, self._sel_layout_mode)
         self.hide()
-
 
 class PluginManagerOverlay(QWidget):
     """Floating overlay — lists discovered plugins with per-plugin ON/OFF toggles."""
@@ -4291,6 +5062,13 @@ class MainWindow(QMainWindow):
         self.on_push_to_talk   = None   # callable: (enable: bool) -> str scope
         self.ptt_hold          = None   # callable: (held: bool) -> None — windowed chord
         self.wake_get_state    = None   # callable: () -> dict {enabled, awake, ready}
+        self.get_action_registry = None # callable: () -> ActionRegistry
+        self.get_plugin_registry = None # callable: () -> PluginRegistry
+        self.dispatch_action   = None   # callable: (name: str, params: dict) -> str
+        self.dispatch_plugin   = None   # callable: (name: str, params: dict) -> str
+        self._res_diag_overlay = None   # ResourceDiagnosticsOverlay
+        self._command_registry = None   # CommandPaletteRegistry
+        self._command_palette  = None   # CommandPaletteOverlay
         self._muted            = False
         self._current_file: str | None = None
         self._remote_overlay: RemoteKeyOverlay | None = None
@@ -4393,7 +5171,7 @@ class MainWindow(QMainWindow):
         # Muted is the default and the button says so, because a soundtrack
         # talking over JARVIS is the one way this feature could make the
         # assistant worse rather than better.
-        self._video_mute_btn = _vid_btn("🔇  SOUND OFF")
+        self._video_mute_btn = _vid_btn("🔊  SOUND ON")
         self._video_mute_btn.clicked.connect(self._toggle_video_mute)
         _vid_hdr.addWidget(self._video_mute_btn)
 
@@ -4428,7 +5206,7 @@ class MainWindow(QMainWindow):
             _vid_v.addWidget(self._video_widget, stretch=1)
 
             self._video_audio = QAudioOutput()
-            self._video_audio.setMuted(True)
+            self._video_audio.setMuted(False)
             self._video_player = QMediaPlayer()
             self._video_player.setVideoOutput(self._video_item)
             # Keep the picture filling the view as the window is resized.
@@ -4449,7 +5227,7 @@ class MainWindow(QMainWindow):
             # alone: one stream, one player, nothing to synchronise.
             self._video_sound = QMediaPlayer()
             self._video_sound_out = QAudioOutput()
-            self._video_sound_out.setMuted(True)
+            self._video_sound_out.setMuted(False)
             self._video_sound.setAudioOutput(self._video_sound_out)
 
             self._video_sync = QTimer(self)
@@ -4506,6 +5284,12 @@ class MainWindow(QMainWindow):
         self._update_autostart_btn(self._check_autostart())
         from memory.config_manager import get_brief_enabled as _gbe
         self._update_brief_btn(_gbe())
+        from memory.config_manager import get_layout_mode as _glm
+        self._layout_mode = _glm()
+        self.set_layout_mode(self._layout_mode, persist=False)
+        from memory.config_manager import get_resource_profile as _grp
+        self._resource_profile = _grp()
+        self.set_resource_profile(self._resource_profile, persist=False)
 
         self._clock_tmr = QTimer(self)
         self._clock_tmr.timeout.connect(self._tick_clock)
@@ -4557,6 +5341,10 @@ class MainWindow(QMainWindow):
         sc_full.activated.connect(self._toggle_fullscreen)
         sc_intr = QShortcut(QKeySequence("Escape"), self)
         sc_intr.activated.connect(self._do_interrupt)
+        sc_palette = QShortcut(QKeySequence("Ctrl+K"), self)
+        sc_palette.activated.connect(self._toggle_command_palette)
+        sc_diag = QShortcut(QKeySequence("Ctrl+D"), self)
+        sc_diag.activated.connect(self._open_resource_diagnostics)
 
     def _show_camera_frame(self, img_bytes: bytes):
         """Slot — display camera preview overlay (main thread)."""
@@ -5151,6 +5939,8 @@ class MainWindow(QMainWindow):
             )
         if self._customize_overlay and self._customize_overlay.isVisible():
             ow, oh = CustomizeOverlay._OW, CustomizeOverlay._OH
+            oh = min(oh, cw.height() - 16)
+            ow = min(ow, cw.width() - 20)
             self._customize_overlay.setGeometry(
                 (cw.width()  - ow) // 2,
                 (cw.height() - oh) // 2,
@@ -5181,9 +5971,35 @@ class MainWindow(QMainWindow):
         cpu = snap["cpu"]
         self._bar_cpu.set_value(cpu, f"{cpu:.0f}%")
 
-        # MEM
+        # System MEM
         mem = snap["mem"]
         self._bar_mem.set_value(mem, f"{mem:.0f}%")
+
+        # Process RAM (RSS)
+        proc_ram = snap.get("proc_ram", 0.0)
+        pct_ram = min(100.0, (proc_ram / 1024.0) * 100.0)
+        if hasattr(self, "_bar_proc_ram"):
+            self._bar_proc_ram.set_value(pct_ram, f"{proc_ram:.0f}M")
+
+        # Sparkline
+        if hasattr(self, "_sparkline"):
+            self._sparkline.update()
+
+        # Profile button
+        if hasattr(self, "_prof_btn"):
+            cur_p = ResourceGuardian.get_instance().get_profile()
+            self._prof_btn.setText(PROFILE_DISPLAY_NAMES.get(cur_p, cur_p.upper()))
+
+        # Status badge
+        if hasattr(self, "_status_badge"):
+            st = snap.get("state", "IDLE")
+            self._status_badge.setText(f"STATUS: {st}")
+            st_col = C.GREEN if st == "IDLE" else (C.ACC if "VOICE" in st else C.PRI)
+            self._status_badge.setStyleSheet(f"color: {st_col}; background: transparent; border: none;")
+
+        # Diagnostics overlay live refresh if open
+        if hasattr(self, "_res_diag_overlay") and self._res_diag_overlay and self._res_diag_overlay.isVisible():
+            self._res_diag_overlay.refresh()
 
         # NET
         net = snap["net"]
@@ -5318,34 +6134,58 @@ class MainWindow(QMainWindow):
         w.setStyleSheet(f"background: {C.DARK}; border-right: 1px solid {C.BORDER};")
         lay = QVBoxLayout(w)
         lay.setContentsMargins(8, 10, 8, 10)
-        lay.setSpacing(6)
+        lay.setSpacing(5)
 
-        hdr = QLabel("◈ SYS MONITOR")
+        hdr = QLabel("◈ RESOURCE GUARDIAN")
         hdr.setFont(QFont("Courier New", 7, QFont.Weight.Bold))
         hdr.setStyleSheet(f"color: {C.PRI}; background: transparent; "
                           f"border-bottom: 1px solid {C.BORDER}; padding-bottom: 4px;")
         lay.addWidget(hdr)
-        lay.addSpacing(2)
+
+        self._prof_btn = QPushButton("BALANCED")
+        self._prof_btn.setFixedHeight(20)
+        self._prof_btn.setFont(QFont("Courier New", 6, QFont.Weight.Bold))
+        self._prof_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._prof_btn.setStyleSheet(f"""
+            QPushButton {{
+                background: {C.PANEL2}; color: {C.BRASS_BRIGHT};
+                border: 1px solid {C.BORDER}; border-radius: 3px;
+                padding: 0 4px;
+            }}
+            QPushButton:hover {{
+                border-color: {C.BRASS_BRIGHT}; color: #ffffff;
+            }}
+        """)
+        self._prof_btn.clicked.connect(self._open_resource_diagnostics)
+        lay.addWidget(self._prof_btn)
 
         self._bar_cpu = MetricBar("CPU", C.PRI)
-        self._bar_mem = MetricBar("MEM", C.ACC2)
+        self._bar_mem = MetricBar("SYS RAM", C.ACC2)
+        self._bar_proc_ram = MetricBar("APP RAM", C.PRI)
         self._bar_net = MetricBar("NET", C.GREEN)
         self._bar_gpu = MetricBar("GPU", C.ACC)
         self._bar_tmp = MetricBar("TMP", "#ff6688")
 
-        for bar in [self._bar_cpu, self._bar_mem, self._bar_net,
+        for bar in [self._bar_cpu, self._bar_mem, self._bar_proc_ram, self._bar_net,
                     self._bar_gpu, self._bar_tmp]:
             lay.addWidget(bar)
 
-        lay.addSpacing(4)
+        self._sparkline = ResourceSparkline(on_click=self._open_resource_diagnostics)
+        lay.addWidget(self._sparkline)
+        lay.addSpacing(2)
 
         info_panel = QWidget()
         info_panel.setStyleSheet(
             f"background: {C.PANEL2}; border: 1px solid {C.BORDER}; border-radius: 4px;"
         )
         ip_lay = QVBoxLayout(info_panel)
-        ip_lay.setContentsMargins(6, 5, 6, 5)
-        ip_lay.setSpacing(3)
+        ip_lay.setContentsMargins(6, 4, 6, 4)
+        ip_lay.setSpacing(2)
+
+        self._status_badge = QLabel("STATUS: IDLE")
+        self._status_badge.setFont(QFont("Courier New", 7, QFont.Weight.Bold))
+        self._status_badge.setStyleSheet(f"color: {C.GREEN}; background: transparent; border: none;")
+        ip_lay.addWidget(self._status_badge)
 
         self._uptime_lbl = QLabel("UP  --:--")
         self._uptime_lbl.setFont(QFont("Courier New", 8, QFont.Weight.Bold))
@@ -5429,14 +6269,21 @@ class MainWindow(QMainWindow):
         self._interrupt_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self._interrupt_btn.setStyleSheet(f"""
             QPushButton {{
-                background: #140008; color: {C.MUTED_C};
-                border: 1px solid {C.MUTED_C}; border-radius: 3px;
+                background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 rgba(36, 12, 18, 0.85), stop:1 rgba(20, 6, 10, 0.95));
+                color: #ff6688;
+                border: 1px solid rgba(255, 77, 109, 0.55);
+                border-radius: 6px;
+                padding: 4px;
             }}
             QPushButton:hover {{
-                background: #200010; border: 1px solid #ff6688;
+                background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 rgba(50, 16, 26, 0.95), stop:1 rgba(30, 10, 16, 0.95));
+                border: 1px solid #ff4d6d;
+                color: #ff99aa;
             }}
             QPushButton:pressed {{
-                background: #300018;
+                background: rgba(15, 4, 8, 0.95);
+                border: 1px solid #ff3355;
+                padding-top: 6px; padding-left: 5px;
             }}
         """)
         self._interrupt_btn.clicked.connect(self._do_interrupt)
@@ -5456,19 +6303,30 @@ class MainWindow(QMainWindow):
         """Floating overlay panel shown when the ⚙ header button is toggled."""
         _BTN_STYLE_PRI = f"""
             QPushButton {{
-                background: #00091a; color: {C.PRI};
-                border: 1px solid {C.PRI_DIM}; border-radius: 3px;
-                text-align: left; padding: 0 8px;
+                background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 rgba(212, 175, 55, 0.18), stop:1 rgba(0, 229, 255, 0.14));
+                color: #f0c544;
+                border: 1px solid rgba(212, 175, 55, 0.45);
+                border-radius: 5px;
+                text-align: left; padding: 0 10px;
             }}
-            QPushButton:hover {{ background: {C.PRI_GHO}; border-color: {C.PRI}; }}
+            QPushButton:hover {{
+                background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 rgba(212, 175, 55, 0.32), stop:1 rgba(0, 229, 255, 0.25));
+                border-color: #f0c544; color: #ffffff;
+            }}
         """
         _BTN_STYLE_DIM = f"""
             QPushButton {{
-                background: transparent; color: {C.TEXT_MED};
-                border: 1px solid {C.BORDER}; border-radius: 3px;
-                text-align: left; padding: 0 8px;
+                background: rgba(4, 18, 30, 0.70);
+                color: #6ab8cc;
+                border: 1px solid rgba(212, 175, 55, 0.22);
+                border-radius: 5px;
+                text-align: left; padding: 0 10px;
             }}
-            QPushButton:hover {{ color: {C.PRI}; border-color: {C.BORDER_B}; }}
+            QPushButton:hover {{
+                background: rgba(212, 175, 55, 0.15);
+                color: #f0c544;
+                border-color: rgba(212, 175, 55, 0.50);
+            }}
         """
 
         self._BTN_PRI, self._BTN_DIM = _BTN_STYLE_PRI, _BTN_STYLE_DIM
@@ -5476,10 +6334,10 @@ class MainWindow(QMainWindow):
         w.setObjectName("QuickDrawer")
         w.setStyleSheet(f"""
             QWidget#QuickDrawer {{
-                background: {C.DARK};
-                border: 1px solid {C.BORDER_B};
+                background: rgba(3, 14, 26, 0.95);
+                border: 1.5px solid rgba(212, 175, 55, 0.45);
                 border-top: none;
-                border-radius: 0 0 6px 6px;
+                border-radius: 0 0 10px 10px;
             }}
         """)
         w.hide()
@@ -5493,6 +6351,22 @@ class MainWindow(QMainWindow):
         hdr.setStyleSheet(f"color: {C.PRI_DIM}; background: transparent; "
                           f"border-bottom: 1px solid {C.BORDER}; padding-bottom: 4px;")
         lay.addWidget(hdr)
+
+        cp_btn = QPushButton("⌘  COMMAND PALETTE  [Ctrl+K]")
+        cp_btn.setFixedHeight(28)
+        cp_btn.setFont(QFont("Courier New", 7, QFont.Weight.Bold))
+        cp_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        cp_btn.setStyleSheet(_BTN_STYLE_PRI)
+        cp_btn.clicked.connect(self._toggle_command_palette)
+        lay.addWidget(cp_btn)
+
+        res_btn = QPushButton("◈  RESOURCE GUARDIAN  [Ctrl+D]")
+        res_btn.setFixedHeight(26)
+        res_btn.setFont(QFont("Courier New", 7))
+        res_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        res_btn.setStyleSheet(_BTN_STYLE_DIM)
+        res_btn.clicked.connect(self._open_resource_diagnostics)
+        lay.addWidget(res_btn)
 
         remote_btn = QPushButton("◉  REMOTE CONTROL")
         remote_btn.setFixedHeight(30)
@@ -5622,6 +6496,10 @@ class MainWindow(QMainWindow):
         self._hud_btn.clicked.connect(self._toggle_hud_style)
         self._refresh_hud_btn()
 
+        self._layout_btn = _row(QPushButton())
+        self._layout_btn.clicked.connect(self._toggle_layout_mode)
+        self._refresh_layout_btn()
+
         w.adjustSize()
         return w
 
@@ -5635,6 +6513,11 @@ class MainWindow(QMainWindow):
         import. Afterwards the same check costs about a millisecond, so it only
         ever needed to happen somewhere other than in front of the user.
         """
+        from memory.config_manager import get_wake_word_enabled
+        if ResourceGuardian.get_instance().get_profile() == PROFILE_LOW_RAM and not get_wake_word_enabled():
+            self._wake_btns_sig.emit()
+            return
+
         def work():
             try:
                 self._wake_state()
@@ -5649,6 +6532,7 @@ class MainWindow(QMainWindow):
             self._position_quick_drawer()
             self._quick_drawer.show()
             self._quick_drawer.raise_()
+            self._animate_drawer_slide(self._quick_drawer)
         else:
             self._quick_drawer.hide()
 
@@ -5659,8 +6543,24 @@ class MainWindow(QMainWindow):
             self._position_ctrl_drawer()
             self._ctrl_drawer.show()
             self._ctrl_drawer.raise_()
+            self._animate_drawer_slide(self._ctrl_drawer)
         else:
             self._ctrl_drawer.hide()
+
+    def _animate_drawer_slide(self, drawer):
+        try:
+            from PyQt6.QtCore import QPropertyAnimation, QEasingCurve, QRect
+            anim = QPropertyAnimation(drawer, b"geometry", self)
+            anim.setDuration(160)
+            anim.setEasingCurve(QEasingCurve.Type.OutCubic)
+            final_geom = drawer.geometry()
+            start_geom = QRect(final_geom.x(), final_geom.y(), final_geom.width(), 0)
+            anim.setStartValue(start_geom)
+            anim.setEndValue(final_geom)
+            anim.start()
+            self._drawer_anim = anim
+        except Exception:
+            pass
 
     def _close_setup(self):
         if hasattr(self, "_quick_drawer"):
@@ -6448,30 +7348,31 @@ class MainWindow(QMainWindow):
 
 
     def _refresh_hud_btn(self):
+        if not hasattr(self, '_hud_btn'):
+            return
         from memory.config_manager import get_hud_style
-        face = get_hud_style() == "face"
-        # Neither state is "off", so both read as active — this is a choice
-        # between two things, not a switch with a disabled side.
+        st = get_hud_style()
+        labels = {
+            "face": ("🧑  HUD: 3D AVATAR", "Holographic 3D wireframe head"),
+            "core": ("◉  HUD: ARC REACTOR", "Rotational Stark Arc Reactor"),
+            "quantum": ("⚛  HUD: QUANTUM ORB", "Orbital energy sphere with dynamic particles"),
+            "neural": ("〰  HUD: NEURAL WAVE", "Harmonic audio-reactive frequency ribbons"),
+        }
+        text, tip = labels.get(st, ("🧑  HUD: 3D AVATAR", "AI Visualizer mode"))
         style = f"""
             QPushButton {{ background: {C.PANEL2}; color: {C.PRI};
                 border: 1px solid {C.BORDER_A}; border-radius: 3px;
                 text-align: left; padding: 0 8px; }}
             QPushButton:hover {{ color: {C.WHITE}; border: 1px solid {C.BORDER_B}; }}"""
-        self._hud_btn.setText("🧑  HUD: ANIMATED FACE" if face
-                              else "◉  HUD: REACTOR CORE")
+        self._hud_btn.setText(text)
         self._hud_btn.setStyleSheet(style)
-        self._hud_btn.setToolTip(
-            "An animated head that speaks your words and shows what JARVIS is "
-            "doing. Tap to switch to the reactor core."
-            if face else
-            "A reactor core that turns with the state and moves with your voice. "
-            "Tap to switch to the animated head.")
+        self._hud_btn.setToolTip(f"{tip}. Tap to cycle visualizer mode.")
 
     def _toggle_hud_style(self):
-        """Swap the centrepiece. Both objects stay in memory, so the change is
-        instant and switching back costs nothing."""
-        from memory.config_manager import get_hud_style, save_hud_style
-        want = "core" if get_hud_style() == "face" else "face"
+        from memory.config_manager import get_hud_style, save_hud_style, HUD_STYLES
+        cur = get_hud_style()
+        idx = HUD_STYLES.index(cur) if cur in HUD_STYLES else 0
+        want = HUD_STYLES[(idx + 1) % len(HUD_STYLES)]
         save_hud_style(want)
         try:
             self.hud.hud_style = want
@@ -6479,9 +7380,37 @@ class MainWindow(QMainWindow):
         except Exception:
             pass
         self._refresh_hud_btn()
-        self._log.append_log(
-            "SYS: HUD switched to the animated face." if want == "face"
-            else "SYS: HUD switched to the reactor core.")
+        self._log.append_log(f"SYS: AI HUD visualizer set to {want.upper()}.")
+
+    def set_layout_mode(self, mode: str, persist: bool = True):
+        from memory.config_manager import save_layout_mode, LAYOUT_MODES
+        m = (mode or "tactical").strip().lower()
+        if m not in LAYOUT_MODES:
+            m = "tactical"
+        self._layout_mode = m
+        if persist:
+            save_layout_mode(m)
+        if hasattr(self, '_left_panel') and self._left_panel is not None:
+            self._left_panel.setVisible(m == "tactical")
+        self._refresh_layout_btn()
+
+    def _refresh_layout_btn(self):
+        if not hasattr(self, '_layout_btn'):
+            return
+        is_tact = getattr(self, '_layout_mode', 'tactical') == 'tactical'
+        self._layout_btn.setText("⊞  LAYOUT: TACTICAL" if is_tact
+                                 else "⊟  LAYOUT: FOCUS MODE")
+        self._layout_btn.setStyleSheet(f"""
+            QPushButton {{ background: {C.PANEL2}; color: {C.PRI};
+                border: 1px solid {C.BORDER_A}; border-radius: 3px;
+                text-align: left; padding: 0 8px; }}
+            QPushButton:hover {{ color: {C.WHITE}; border: 1px solid {C.BORDER_B}; }}""")
+        self._layout_btn.setToolTip("Toggle between full 3-column tactical dashboard and focused centered view.")
+
+    def _toggle_layout_mode(self):
+        want = "focus" if getattr(self, '_layout_mode', 'tactical') == "tactical" else "tactical"
+        self.set_layout_mode(want, persist=True)
+        self._log.append_log(f"SYS: Layout switched to {want.upper()} mode.")
 
     def _toggle_ptt(self):
         from memory.config_manager import (get_push_to_talk_enabled,
@@ -6615,21 +7544,27 @@ class MainWindow(QMainWindow):
         if self._customize_overlay:
             self._customize_overlay.hide()
         cw = self.centralWidget()
+        from memory.config_manager import get_hud_style, get_layout_mode
         ov = CustomizeOverlay(
             cfg.get("assistant_name", "JARVIS") or "JARVIS",
             cfg.get("user_name", ""),
             cfg.get("ui_color", "") or DEFAULT_UI_COLOR,
             cfg.get("voice_name", ""),
+            hud_style=get_hud_style(),
+            layout_mode=get_layout_mode(),
             parent=cw,
         )
         ow, oh = CustomizeOverlay._OW, CustomizeOverlay._OH
         oh = min(oh, cw.height() - 16)
+        ow = min(ow, cw.width() - 20)
         ov.setGeometry(
             (cw.width()  - ow) // 2,
             (cw.height() - oh) // 2,
             ow, oh,
         )
         ov.on_preview = self._preview_ui_color
+        ov.on_preview_hud = self._preview_hud_style
+        ov.on_preview_layout = self._preview_layout_mode
         ov.saved.connect(self._apply_name_update)
         ov.show()
         self._customize_overlay = ov
@@ -6640,9 +7575,19 @@ class MainWindow(QMainWindow):
         if apply_ui_accent(hex_color):
             retheme_all_widgets(old, current_palette())
 
+    def _preview_hud_style(self, style: str):
+        try:
+            self.hud.hud_style = style
+            self.hud.update()
+        except Exception:
+            pass
+
+    def _preview_layout_mode(self, mode: str):
+        self.set_layout_mode(mode, persist=False)
+
     def _apply_name_update(self, name: str, user_name: str, ui_color: str = "",
-                           voice: str = ""):
-        """Update all name/theme-dependent UI elements and persist to config."""
+                           voice: str = "", hud_style: str = "face", layout_mode: str = "tactical"):
+        """Update all name/theme/visualizer/layout elements and persist to config."""
         self._assistant_name = name.strip() or "JARVIS"
         display = self._assistant_name.upper()
         self.setWindowTitle(f"{display} — {APP_VERSION}")
@@ -6658,12 +7603,10 @@ class MainWindow(QMainWindow):
         if ui_color:
             old = current_palette()
             if apply_ui_accent(ui_color):
-                # Live-paint the whole interface (panels, buttons, borders, HUD)
                 retheme_all_widgets(old, current_palette())
                 color_changed = old["PRI"] != C.PRI
 
-        # Voice change → persist and, if it actually changed, rebuild the Live
-        # session so the new voice takes effect (it's fixed at connect time).
+        # Voice change → persist and rebuild Live session if changed
         voice_changed = False
         if voice:
             from memory.config_manager import get_voice, save_voice
@@ -6671,18 +7614,38 @@ class MainWindow(QMainWindow):
                 save_voice(voice)
                 voice_changed = True
 
+        # HUD visualizer makeover
+        if hud_style:
+            from memory.config_manager import save_hud_style
+            save_hud_style(hud_style)
+            try:
+                self.hud.hud_style = hud_style
+                self.hud.update()
+            except Exception:
+                pass
+            self._refresh_hud_btn()
+
+        # Layout makeover
+        if layout_mode:
+            self.set_layout_mode(layout_mode, persist=True)
+
         try:
             data = _read_full_config()
             data["assistant_name"] = self._assistant_name
             data["user_name"] = user_name.strip()
             if ui_color:
                 data["ui_color"] = ui_color.strip().lower()
+            if hud_style:
+                data["hud_style"] = hud_style
+            if layout_mode:
+                data["layout_mode"] = layout_mode
             API_FILE.write_text(json.dumps(data, indent=4), encoding="utf-8")
             self._log.append_log(f"SYS: Identity updated — {display}")
             if color_changed:
                 self._log.append_log(f"SYS: UI colour applied — {ui_color}")
             if voice_changed:
                 self._log.append_log(f"SYS: Voice set — {voice}")
+            self._log.append_log(f"SYS: Visualizer — {hud_style.upper()} | Layout: {layout_mode.upper()}")
         except Exception as e:
             self._log.append_log(f"ERR: Config save failed — {e}")
 
@@ -6810,6 +7773,155 @@ class MainWindow(QMainWindow):
         ov.show()
         ov.raise_()
         self._plugin_settings_overlay = ov   # keep a reference so it isn't GC'd
+
+    # ── Resource Guardian & Diagnostics ──────────────────────────────────────
+
+    def _open_resource_diagnostics(self):
+        if not hasattr(self, "_res_diag_overlay") or self._res_diag_overlay is None:
+            self._res_diag_overlay = ResourceDiagnosticsOverlay(
+                parent=self.centralWidget(),
+                on_profile_changed=self.set_resource_profile,
+            )
+        self._res_diag_overlay.refresh()
+        self._centre_overlay(self._res_diag_overlay)
+
+    def set_resource_profile(self, profile: str, persist: bool = True):
+        clean = ResourceGuardian.get_instance().set_profile(profile)
+        if persist:
+            from memory.config_manager import save_resource_profile
+            save_resource_profile(clean)
+        self._resource_profile = clean
+        disp = PROFILE_DISPLAY_NAMES.get(clean, clean.upper())
+        if hasattr(self, "_prof_btn"):
+            self._prof_btn.setText(disp)
+        self._log.append_log(f"SYS: Resource profile set to {disp}.")
+
+    # ── Smart Command Palette (Ctrl+K) ───────────────────────────────────────
+
+    def _toggle_command_palette(self):
+        if hasattr(self, "_command_palette") and self._command_palette and self._command_palette.isVisible():
+            self._command_palette.hide()
+            return
+        self._populate_command_palette()
+        cw = self.centralWidget()
+        ow = CommandPaletteOverlay._OW
+        oh = CommandPaletteOverlay._OH
+        ox = max(0, (cw.width() - ow) // 2)
+        oy = max(24, (cw.height() - oh) // 4)
+        self._command_palette.setGeometry(ox, oy, ow, oh)
+        self._command_palette.show_palette()
+
+    def _populate_command_palette(self):
+        if not hasattr(self, "_command_registry") or self._command_registry is None:
+            self._command_registry = CommandPaletteRegistry(notify_log=self._log.append_log)
+            self._command_palette = CommandPaletteOverlay(self._command_registry, parent=self.centralWidget())
+
+        reg = self._command_registry
+
+        # Navigation & Views
+        reg.register(CommandItem("view.fullscreen", "Toggle Fullscreen", "Toggle full screen HUD mode", "VIEW", "F11", self._toggle_fullscreen))
+        reg.register(CommandItem("view.mute", "Toggle Microphone Mute", "Mute or unmute the input microphone", "VIEW", "F4", self._toggle_mute))
+        reg.register(CommandItem("view.interrupt", "Interrupt Speech", "Cut in and stop speech mid-turn", "VIEW", "Escape", self._do_interrupt))
+        reg.register(CommandItem("view.tactical", "Switch Layout: Tactical Mode", "3-column HUD with telemetry, visualizer, and log", "VIEW", "", lambda: self.set_layout_mode("tactical")))
+        reg.register(CommandItem("view.focus", "Switch Layout: Focus Mode", "Center-focused streamlined layout", "VIEW", "", lambda: self.set_layout_mode("focus")))
+        reg.register(CommandItem("view.style_face", "Visualizer: 3D Holographic Head", "Stark avatar 3D low-poly face", "VIEW", "", lambda: self.set_hud_style("face")))
+        reg.register(CommandItem("view.style_core", "Visualizer: Stark Arc Reactor", "Revolving sweep arc core", "VIEW", "", lambda: self.set_hud_style("core")))
+        reg.register(CommandItem("view.style_quantum", "Visualizer: Quantum Orbital Sphere", "3D orbital particle sphere", "VIEW", "", lambda: self.set_hud_style("quantum")))
+        reg.register(CommandItem("view.style_neural", "Visualizer: Cyberpunk Neural Waves", "Harmonic audio wave ribbons", "VIEW", "", lambda: self.set_hud_style("neural")))
+
+        # Panels & Controls
+        reg.register(CommandItem("panel.diagnostics", "Resource Guardian & Diagnostics", "Live RSS, memory leak diagnostics, and profiles", "SYSTEM", "Ctrl+D", self._open_resource_diagnostics))
+        reg.register(CommandItem("panel.memory", "Open Memory Bank", "Inspect and search long-term memories", "SYSTEM", "", self._open_memory_panel))
+        reg.register(CommandItem("panel.audio_devices", "Audio Device Settings", "Configure microphone and speaker devices", "SYSTEM", "", self._open_audio_devices))
+        reg.register(CommandItem("panel.providers", "Engine & Provider Settings", "Select LLM, STT, TTS and sidecar providers", "SYSTEM", "", self._open_providers))
+        reg.register(CommandItem("panel.plugins", "Plugin Manager", "Browse and toggle community plugins", "SYSTEM", "", self._open_plugin_manager))
+        reg.register(CommandItem("panel.plugin_settings", "Plugin Configuration", "Configure parameters for enabled plugins", "SYSTEM", "", self._open_plugin_settings))
+        reg.register(CommandItem("panel.customize", "Customise Assistant", "Character voices, visualizer modes, and theme colors", "SYSTEM", "", self._open_customize))
+        reg.register(CommandItem("panel.remote", "Remote Control Phone Link", "Pair mobile browser dashboard via QR code", "SYSTEM", "", self._open_remote))
+        reg.register(CommandItem("panel.setup_drawer", "Toggle Setup Drawer", "Open or close the setup drawer", "SYSTEM", "", lambda: self._toggle_drawer(not self._quick_drawer.isVisible())))
+        reg.register(CommandItem("panel.ctrl_drawer", "Toggle Controls Drawer", "Open or close everyday switches drawer", "SYSTEM", "", lambda: self._toggle_controls(not self._ctrl_drawer.isVisible())))
+        reg.register(CommandItem("panel.desktop_shortcut", "Create Desktop Shortcut", "Create launch shortcut on desktop", "SYSTEM", "", self._create_desktop_shortcut))
+
+        # Profiles
+        reg.register(CommandItem("profile.low_ram", "Resource Profile: LOW RAM", "Saves memory: drops dust particles, slows telemetry, defers models", "PROFILE", "", lambda: self.set_resource_profile("low_ram")))
+        reg.register(CommandItem("profile.balanced", "Resource Profile: BALANCED", "Standard responsive voice assistant with 2s telemetry", "PROFILE", "", lambda: self.set_resource_profile("balanced")))
+        reg.register(CommandItem("profile.full", "Resource Profile: FULL EXPERIENCE", "Highest visualizer fidelity and rapid telemetry updates", "PROFILE", "", lambda: self.set_resource_profile("full")))
+
+        # System Tools
+        reg.register(CommandItem("core.system_status", "System Status Snapshot", "Read real-time CPU, RAM, GPU, and system uptime", "SYSTEM", "", lambda: self._dispatch_palette_action("system_status", {})))
+        reg.register(CommandItem("core.undo", "Undo Last Action", "Undo the most recent computer control action", "SYSTEM", "", lambda: self._dispatch_palette_action("undo", {})))
+
+        # Voice & Gating
+        reg.register(CommandItem("ctrl.wake_word", "Toggle Wake Word", "Enable or disable 'Hey Jarvis' keyword detection", "SYSTEM", "", self._toggle_wake_word))
+        reg.register(CommandItem("ctrl.wake_manual", "Wake / Sleep Toggle", "Manually wake assistant or put to sleep", "SYSTEM", "", self._tap_wake_manual))
+        reg.register(CommandItem("ctrl.push_to_talk", "Toggle Push-to-Talk", "Switch between open mic and push-to-talk hotkey", "SYSTEM", "", self._toggle_ptt))
+        reg.register(CommandItem("ctrl.morning_brief", "Toggle Morning Briefing", "Daily briefing on first launch of the morning", "SYSTEM", "", self._toggle_brief))
+
+        # Discovered Actions
+        if hasattr(self, "get_action_registry") and callable(self.get_action_registry):
+            act_reg = self.get_action_registry()
+            if act_reg and hasattr(act_reg, "_actions"):
+                for name, rec in act_reg._actions.items():
+                    cmd_id = f"action.{name}"
+                    props = rec.parameters.get("properties", {})
+                    req = bool(props)
+                    if not req or name in ("system_status", "undo"):
+                        h = lambda n=name: self._dispatch_palette_action(n, {})
+                        req_params = False
+                    else:
+                        h = None
+                        req_params = True
+                    reg.register(CommandItem(
+                        id=cmd_id,
+                        title=f"Action: {name}",
+                        description=rec.description or f"Registered tool action {name}",
+                        category="ACTION",
+                        handler=h,
+                        action_name=name,
+                        requires_params=req_params,
+                        param_names=list(props.keys()),
+                    ))
+
+        # Discovered Plugins
+        if hasattr(self, "get_plugins") and callable(self.get_plugins):
+            try:
+                plugins = self.get_plugins() or []
+                for p in plugins:
+                    pname = p.get("name")
+                    if not pname:
+                        continue
+                    cmd_id = f"plugin.{pname}"
+                    en = p.get("enabled", False)
+                    desc = p.get("description", "")
+                    reg.register(CommandItem(
+                        id=cmd_id,
+                        title=f"Plugin: {pname}",
+                        description=desc or f"Community plugin {pname}",
+                        category="PLUGIN",
+                        is_available=en,
+                        unavailable_reason=f"Plugin '{pname}' is disabled in Plugin Manager." if not en else "",
+                        plugin_name=pname,
+                        handler=(lambda n=pname: self._dispatch_palette_plugin(n, {})) if en else None,
+                    ))
+            except Exception:
+                pass
+
+    def _dispatch_palette_action(self, name: str, params: dict):
+        if hasattr(self, "dispatch_action") and callable(self.dispatch_action):
+            res = self.dispatch_action(name, params)
+            self._log.append_log(f"ACT [{name}]: {res}")
+            return res
+        elif hasattr(self, "on_text_command") and callable(self.on_text_command):
+            self.on_text_command(f"Execute {name}")
+            return f"Action {name} dispatched."
+        return f"Action {name} cannot be dispatched right now."
+
+    def _dispatch_palette_plugin(self, name: str, params: dict):
+        if hasattr(self, "dispatch_plugin") and callable(self.dispatch_plugin):
+            res = self.dispatch_plugin(name, params)
+            self._log.append_log(f"PLUG [{name}]: {res}")
+            return res
+        return f"Plugin {name} cannot be dispatched right now."
 
     # ── Clipboard intelligence ───────────────────────────────────────────────────
 
@@ -7083,6 +8195,47 @@ class JarvisUI:
     def on_push_to_talk(self, cb):
         self._win.on_push_to_talk = cb
 
+    @property
+    def get_action_registry(self):
+        return self._win.get_action_registry
+
+    @get_action_registry.setter
+    def get_action_registry(self, cb):
+        self._win.get_action_registry = cb
+
+    @property
+    def get_plugin_registry(self):
+        return self._win.get_plugin_registry
+
+    @get_plugin_registry.setter
+    def get_plugin_registry(self, cb):
+        self._win.get_plugin_registry = cb
+
+    @property
+    def dispatch_action(self):
+        return self._win.dispatch_action
+
+    @dispatch_action.setter
+    def dispatch_action(self, cb):
+        self._win.dispatch_action = cb
+
+    @property
+    def dispatch_plugin(self):
+        return self._win.dispatch_plugin
+
+    @dispatch_plugin.setter
+    def dispatch_plugin(self, cb):
+        self._win.dispatch_plugin = cb
+
+    def set_resource_profile(self, profile: str):
+        self._win.set_resource_profile(profile)
+
+    def open_command_palette(self):
+        self._win._toggle_command_palette()
+
+    def open_resource_diagnostics(self):
+        self._win._open_resource_diagnostics()
+
     def push_visemes(self, frames, hop: float, at: float) -> None:
         """Thread-safe: post a schedule of (level, openness, width) mouth frames
         for JARVIS's own speech. `at` is the wall-clock time the batch begins to
@@ -7145,7 +8298,7 @@ class JarvisUI:
         """Thread-safe: show a webcam frame in the small overlay (screen captures)."""
         self._win._camera_sig.emit(img_bytes)
 
-    def show_video(self, source: str, title: str = "", muted: bool = True,
+    def show_video(self, source: str, title: str = "", muted: bool = False,
                    audio_source: str = "") -> None:
         """Thread-safe: play a video where the avatar normally is.
 

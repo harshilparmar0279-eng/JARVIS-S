@@ -412,6 +412,7 @@ _SEARCH_ENGINES: dict[str, str] = {
     "bing":       "https://www.bing.com/search?q=",
     "duckduckgo": "https://duckduckgo.com/?q=",
     "yandex":     "https://yandex.com/search/?text=",
+    "youtube":    "https://www.youtube.com/results?search_query=",
 }
 
 _MAC_APP_NAMES: dict[str, str] = {
@@ -429,7 +430,7 @@ _MAC_APP_NAMES: dict[str, str] = {
 _WIN_EXE_HINTS: dict[str, str] = {"chrome": "chrome", "edge": "msedge"}
 
 
-def _open_native(url: str, browser_name: Optional[str]) -> str:
+def _open_native(url: str, browser_name: Optional[str], account: Optional[str] = None) -> str:
     """
     Opens the user's REAL browser normally — with their own profile,
     logged-in accounts and extensions. No automation attaches, so an
@@ -438,6 +439,15 @@ def _open_native(url: str, browser_name: Optional[str]) -> str:
     session restore) — exactly as if the user had opened it themselves.
     Works on all three of Windows / macOS / Linux.
     """
+    # ── Special rule: YouTube ALWAYS opens in Brave Browser ──
+    from actions.brave_launcher import is_youtube_target, open_in_brave
+    if is_youtube_target(url) or (browser_name and browser_name.lower() == "brave" and "youtube" in str(url).lower()):
+        target = url if url and "youtube" in url.lower() else "https://www.youtube.com/"
+        ok, msg = open_in_brave(target)
+        if ok:
+            return outcome.done("browser_control", action="go_to", browser="brave", url=target, message=msg, verified=True)
+        return outcome.failed("browser_control", msg, browser="brave", url=target)
+
     url = _normalize_url(url) if url and url.strip() else ""
     if url == "about:blank":
         url = ""
@@ -448,6 +458,30 @@ def _open_native(url: str, browser_name: Optional[str]) -> str:
     elif not url:
         # No URL → only a window will open; needs the default browser's exe
         name = _detect_default_browser()
+
+    # ── Special rule: Chrome requires choosing a Google Account / profile ──
+    if name == "chrome":
+        from actions.chrome_launcher import discover_chrome_profiles, match_profile, launch_chrome, format_available_accounts
+        profiles = discover_chrome_profiles()
+        if not account:
+            acc_list = format_available_accounts(profiles)
+            return outcome.failed(
+                "browser_control",
+                f"Which Google account should I use?\nAvailable accounts:\n{acc_list}",
+                browser="chrome", needs_account=True, url=url
+            )
+        matched = match_profile(account, profiles)
+        if not matched:
+            acc_list = format_available_accounts(profiles)
+            return outcome.failed(
+                "browser_control",
+                f"Account '{account}' not found among Chrome profiles.\nAvailable accounts:\n{acc_list}",
+                browser="chrome", requested_account=account, url=url
+            )
+        ok, msg = launch_chrome(matched["dir_name"], url)
+        if ok:
+            return outcome.done("browser_control", action="go_to", browser="chrome", profile=matched["dir_name"], account=matched["display"], url=url, verified=True)
+        return outcome.failed("browser_control", msg, browser="chrome", url=url)
 
     # Specific browser → launch its own executable, exactly like the user would.
     if name:
@@ -1131,7 +1165,8 @@ def browser_control(
         else:
             nav_url = params.get("url", "").strip()
 
-        result = _open_native(nav_url, browser)
+        account_param = params.get("account")
+        result = _open_native(nav_url, browser, account=account_param)
         if result.startswith("Opened") and nav_url:
             _registry.note_native_url(_normalize_url(nav_url))
         _log(player, result)
@@ -1275,6 +1310,10 @@ TOOL = {
             "path": {
                 "type": "STRING",
                 "description": "Save path for screenshot"
+            },
+            "account": {
+                "type": "STRING",
+                "description": "For Google Chrome: Google account email or profile name to use (e.g. harshil.example@gmail.com)."
             },
             "incognito": {
                 "type": "BOOLEAN",

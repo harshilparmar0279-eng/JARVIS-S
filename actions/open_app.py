@@ -289,9 +289,58 @@ def _launch_and_verify(player, spoken: str, launcher_name: str,
 # ─────────────────────────────────────────────────────────────────────────────
 def open_app(parameters=None, response=None, player=None,
              session_memory=None) -> str:
-    spoken = ((parameters or {}).get("app_name") or "").strip()
+    params = parameters or {}
+    spoken = (params.get("app_name") or "").strip()
     if not spoken:
         return outcome.failed("open_app", "no application name was given")
+
+    # ── YouTube Special Routing: ALWAYS open YouTube in Brave Browser ──
+    from actions.brave_launcher import is_youtube_target, open_in_brave
+    if is_youtube_target(spoken):
+        ok, msg = open_in_brave("https://www.youtube.com/")
+        if ok:
+            _log(player, f"JARVIS: {msg}")
+            return outcome.done("open_app", app="YouTube", browser="brave", url="https://www.youtube.com/", verified=True)
+        else:
+            _log(player, f"JARVIS: {msg}")
+            return outcome.failed("open_app", msg, app="YouTube", browser="brave")
+
+    # ── Chrome Special Routing: Ask which Google account / profile to use ──
+    if spoken.lower() in ("chrome", "google chrome", "google-chrome"):
+        from actions.chrome_launcher import discover_chrome_profiles, match_profile, launch_chrome, format_available_accounts
+        profiles = discover_chrome_profiles()
+        req_account = (params.get("account") or "").strip()
+
+        # If user included email in app_name string like "Chrome with harshil@..."
+        if not req_account and (" with " in spoken.lower() or " for " in spoken.lower()):
+            for split_word in (" with ", " for "):
+                if split_word in spoken.lower():
+                    _, _, candidate = spoken.partition(split_word)
+                    req_account = candidate.strip()
+                    break
+
+        if not req_account:
+            acc_list = format_available_accounts(profiles)
+            msg = f"Which Google account should I use? Available accounts: {acc_list}"
+            _log(player, "JARVIS: Asking which Google account to use for Chrome.")
+            _say(player, "Which Google account should I use?")
+            return outcome.failed("open_app", msg, app="Chrome", needs_account=True)
+
+        matched = match_profile(req_account, profiles)
+        if not matched:
+            acc_list = format_available_accounts(profiles)
+            msg = f"Account '{req_account}' is not configured in Chrome. Available accounts: {acc_list}"
+            _log(player, f"JARVIS: {msg}")
+            _say(player, f"Account {req_account} is not configured in Chrome.")
+            return outcome.failed("open_app", msg, app="Chrome", requested_account=req_account)
+
+        ok, msg = launch_chrome(matched["dir_name"])
+        if ok:
+            _log(player, f"JARVIS: Opened Chrome with account {matched['display']}.")
+            return outcome.done("open_app", app="Chrome", profile=matched["dir_name"], account=matched["display"], verified=True)
+        else:
+            _log(player, f"JARVIS: {msg}")
+            return outcome.failed("open_app", msg, app="Chrome")
 
     if _SYSTEM not in _LAUNCHERS:
         return outcome.failed(
@@ -401,8 +450,14 @@ TOOL = {
                     "'wp' or 'whats' is 'WhatsApp', 'ig' is 'Instagram', 'vs "
                     "code' is 'Visual Studio Code'. A two-letter fragment "
                     "matches the wrong program - 'wp' finds WPS Office. Any "
-                    "application on the machine works; there is no fixed list."
+                    "application on the machine works; there is no fixed list. "
+                    "NOTE: YouTube commands ALWAYS open in Brave. "
+                    "Chrome commands require specifying which Google account / profile to use."
                 ),
+            },
+            "account": {
+                "type": "STRING",
+                "description": "For Google Chrome: which email ID or Google profile to use (e.g. harshil.example@gmail.com).",
             }
         },
         "required": ["app_name"],

@@ -1,0 +1,11 @@
+{
+  "profiles": [
+    {
+      "dir_name": "Default",
+      "email": "user@example.com",
+      "name": "Personal",
+      "gaia_name": "User Name",
+      "display": "Personal (user@example.com)"
+    }
+  ]
+}

@@ -78,20 +78,165 @@ def save_assistant_config(assistant_name: str, user_name: str) -> None:
 # ── Assistant voice ──────────────────────────────────────────────────────────
 # Gemini Live prebuilt voices. Names are proper nouns — identical in every
 # language, so this list is safe to show verbatim in any locale.
-AVAILABLE_VOICES = ["Charon", "Puck", "Kore", "Fenrir", "Aoede"]
+BUILTIN_VOICES   = ["Charon", "Puck", "Kore", "Fenrir", "Aoede", "kavya", "XG", "Tiara"]
+
+PERMANENT_CHARACTER_VOICES = {
+    "kavya": {
+        "name": "kavya",
+        "voice_type": "gemini",
+        "base_voice": "Aoede",
+        "voice_category": "Cute Caring Sweet Girlfriend",
+        "persona": (
+            "Real, interactive, and emotionally present — Kavya makes every exchange feel like an actual conversation, not a script read back. "
+            "She picks up on what's being said and responds like she's genuinely listening, pulling people into longer exchanges instead of quick replies. "
+            "Tone: Cute Caring Sweet Girlfriend. Female, Conversational, Young, Cute, Sweet, Affectionate, Caring, Calm and Human-paced. Hindi (Standard) & Hinglish."
+        ),
+        "sample_path": ""
+    },
+    "XG": {
+        "name": "XG",
+        "voice_type": "gemini",
+        "base_voice": "Aoede",
+        "voice_category": "Warm Emotional Girlfriend",
+        "persona": (
+            "Romantic, devoted, and naturally expressive — Deshna Sogam (XG) shifts fluidly between joy, sadness, empathy, and romance within the same conversation. "
+            "Her human-like modulation never locks into one register, keeping exchanges responsive and real. "
+            "Tone: Warm Emotional Girlfriend. Female, Conversational, Young, Cute, Romantic, Devoted, Empathetic, Expressive and Natural. Hindi (Standard) & Hinglish."
+        ),
+        "sample_path": ""
+    },
+    "Tiara": {
+        "name": "Tiara",
+        "voice_type": "gemini",
+        "base_voice": "Kore",
+        "voice_category": "Smooth, Soft and Seductive",
+        "persona": (
+            "A unique blend of sweetness & husky depth, Tiara’s voice feels intimate, emotionally inviting, and deeply personal. "
+            "Her vocal tone evokes warmth, trust, and subtle allure, making it ideal for soothing conversations, light flirtation, and emotionally intelligent chats. "
+            "Tone: Smooth, Soft and Seductive. Female, Young, Conversational, Husky, Intimate, Alluring, Gentle and Relaxed. Hindi (Standard) & Hinglish."
+        ),
+        "sample_path": ""
+    }
+}
 DEFAULT_VOICE    = "Charon"
+AVAILABLE_VOICES = list(BUILTIN_VOICES)
+
+
+def get_custom_voices() -> dict[str, dict]:
+    """Return dictionary of saved custom voices {name: {name, base_voice, persona, sample_path}}."""
+    data = load_api_keys()
+    c = data.get("custom_voices", {})
+    return dict(c) if isinstance(c, dict) else {}
+
+
+def get_available_voices() -> list[str]:
+    """Return list of all available voices (built-in + user custom voices)."""
+    global AVAILABLE_VOICES
+    custom = get_custom_voices()
+    voices = list(BUILTIN_VOICES)
+    for name in custom.keys():
+        if name not in voices:
+            voices.append(name)
+    AVAILABLE_VOICES = list(voices)
+    return voices
+
+
+def get_custom_voice_info(name: str) -> dict:
+    """Return dict metadata for a custom voice or empty dict if not a custom voice."""
+    if not name:
+        return {}
+    target_clean = name.strip()
+    target_lower = target_clean.lower()
+    for k, v in PERMANENT_CHARACTER_VOICES.items():
+        if k.lower() == target_lower:
+            return v
+    voices = get_custom_voices()
+    if name in voices:
+        return voices[name]
+    target_lower = name.strip().lower()
+    for k, v in voices.items():
+        if k.strip().lower() == target_lower:
+            return v
+    return {}
+
+
+def save_custom_voice(
+    name: str,
+    base_voice: str = "Charon",
+    persona: str = "",
+    sample_path: str = "",
+    voice_type: str = "gemini",
+    elevenlabs_voice_id: str = "",
+    elevenlabs_api_key: str = "",
+    elevenlabs_model: str = "eleven_flash_v2_5",
+) -> dict:
+    """Create or update a custom voice definition and persist to config."""
+    name_clean = (name or "").strip()
+    if not name_clean:
+        return {}
+    ensure_config_dir()
+    data: dict = {}
+    if CONFIG_FILE.exists():
+        try:
+            data = json.loads(CONFIG_FILE.read_text(encoding="utf-8"))
+        except Exception:
+            data = {}
+    c = data.get("custom_voices", {})
+    if not isinstance(c, dict):
+        c = {}
+    b = base_voice.strip() if base_voice in BUILTIN_VOICES else DEFAULT_VOICE
+    entry = {
+        "name": name_clean,
+        "base_voice": b,
+        "persona": persona.strip(),
+        "sample_path": sample_path.strip(),
+        "voice_type": (voice_type or "gemini").strip().lower(),
+        "elevenlabs_voice_id": (elevenlabs_voice_id or "").strip(),
+        "elevenlabs_api_key": (elevenlabs_api_key or "").strip(),
+        "elevenlabs_model": (elevenlabs_model or "eleven_flash_v2_5").strip(),
+    }
+    c[name_clean] = entry
+    data["custom_voices"] = c
+    CONFIG_FILE.write_text(json.dumps(data, indent=4), encoding="utf-8")
+    get_available_voices()
+    return entry
+
+
+def delete_custom_voice(name: str) -> bool:
+    """Delete a custom voice. Reverts voice_name to DEFAULT_VOICE if currently active."""
+    name_clean = (name or "").strip()
+    if not name_clean or name_clean in BUILTIN_VOICES:
+        return False
+    ensure_config_dir()
+    data: dict = {}
+    if CONFIG_FILE.exists():
+        try:
+            data = json.loads(CONFIG_FILE.read_text(encoding="utf-8"))
+        except Exception:
+            data = {}
+    c = data.get("custom_voices", {})
+    if isinstance(c, dict) and name_clean in c:
+        del c[name_clean]
+        data["custom_voices"] = c
+        if data.get("voice_name") == name_clean:
+            data["voice_name"] = DEFAULT_VOICE
+        CONFIG_FILE.write_text(json.dumps(data, indent=4), encoding="utf-8")
+        get_available_voices()
+        return True
+    return False
 
 
 def get_voice() -> str:
     """Return the configured Live voice, falling back to the default if unset
     or if the stored value is not a voice we recognise."""
     v = load_api_keys().get("voice_name", DEFAULT_VOICE) or DEFAULT_VOICE
-    return v if v in AVAILABLE_VOICES else DEFAULT_VOICE
+    avail = get_available_voices()
+    return v if v in avail else DEFAULT_VOICE
 
 
 def save_voice(voice_name: str) -> None:
-    """Persist the chosen Live voice. Unknown names collapse to the default so a
-    bad value can never reach the API and break the session."""
+    """Persist the chosen Live voice. Automatically routes between Gemini Live and
+    Pipeline mode (Gemini LLM + ElevenLabs TTS) when an ElevenLabs custom voice is chosen."""
     ensure_config_dir()
     data: dict = {}
     if CONFIG_FILE.exists():
@@ -100,8 +245,64 @@ def save_voice(voice_name: str) -> None:
         except Exception:
             data = {}
     v = (voice_name or "").strip()
-    data["voice_name"] = v if v in AVAILABLE_VOICES else DEFAULT_VOICE
+    avail = get_available_voices()
+    chosen = v if v in avail else DEFAULT_VOICE
+    data["voice_name"] = chosen
+
+    customs = data.get("custom_voices", {})
+    if isinstance(customs, dict) and chosen in customs:
+        info = customs[chosen]
+        if info.get("voice_type") == "elevenlabs" and info.get("elevenlabs_voice_id"):
+            providers = data.get("providers", {})
+            if not isinstance(providers, dict):
+                providers = {}
+            # Keep existing mode (defaults to 'gemini' for continuous live flow)
+            providers["mode"] = providers.get("mode", "gemini")
+            pipe = providers.get("pipeline", {})
+            if not isinstance(pipe, dict):
+                pipe = {}
+            pipe["llm"] = "gemini"
+            pipe["stt"] = "whisper"
+            pipe["tts"] = "elevenlabs"
+            providers["pipeline"] = pipe
+
+            creds = providers.get("creds", {})
+            if not isinstance(creds, dict):
+                creds = {}
+            el_creds = creds.get("elevenlabs", {})
+            if not isinstance(el_creds, dict):
+                el_creds = {}
+            el_creds["voice_id"] = info["elevenlabs_voice_id"]
+            if info.get("elevenlabs_api_key"):
+                el_creds["api_key"] = info["elevenlabs_api_key"]
+            if info.get("elevenlabs_model"):
+                el_creds["model"] = info["elevenlabs_model"]
+            creds["elevenlabs"] = el_creds
+            providers["creds"] = creds
+            data["providers"] = providers
+        else:
+            providers = data.get("providers", {})
+            if isinstance(providers, dict) and providers.get("mode") == "pipeline":
+                pipe = providers.get("pipeline", {})
+                if isinstance(pipe, dict) and pipe.get("tts") == "elevenlabs":
+                    providers["mode"] = "gemini"
+                    data["providers"] = providers
+    elif chosen in BUILTIN_VOICES:
+        providers = data.get("providers", {})
+        if isinstance(providers, dict) and providers.get("mode") == "pipeline":
+            pipe = providers.get("pipeline", {})
+            if isinstance(pipe, dict) and pipe.get("tts") == "elevenlabs":
+                providers["mode"] = "gemini"
+                data["providers"] = providers
+
     CONFIG_FILE.write_text(json.dumps(data, indent=4), encoding="utf-8")
+
+
+# Initialize voice list on import
+try:
+    get_available_voices()
+except Exception:
+    pass
 
 
 def get_wake_word_enabled() -> bool:
@@ -130,16 +331,15 @@ def save_push_to_talk_enabled(enabled: bool) -> None:
     _save_flag("push_to_talk_enabled", enabled)
 
 
-HUD_STYLES = ("face", "core")
+HUD_STYLES = ("face", "core", "quantum", "neural")
 
 
 def get_hud_style() -> str:
-    """Which centrepiece the HUD draws: the animated head, or the reactor core.
-
-    Taste, not capability — both render in the same software painter and cost
-    about the same. Defaults to the head because that is what MARK LIV shipped
-    with; anyone who preferred the older look can switch back in ⚙ and the
-    choice survives a restart.
+    """Which centrepiece the HUD draws:
+    - face: 3D animated holographic wireframe head
+    - core: Stark Arc Reactor with revolving sweep arcs
+    - quantum: 3D orbital quantum energy sphere with floating particles
+    - neural: Cyberpunk neural wave with harmonic audio ribbons
     """
     v = str(load_api_keys().get("hud_style", "face")).strip().lower()
     return v if v in HUD_STYLES else "face"
@@ -148,6 +348,41 @@ def get_hud_style() -> str:
 def save_hud_style(style: str) -> None:
     s = str(style or "").strip().lower()
     _save_flag("hud_style", s if s in HUD_STYLES else "face")
+
+
+RESOURCE_PROFILES = ("low_ram", "balanced", "full")
+
+
+def get_resource_profile() -> str:
+    """Operating resource profile:
+    - low_ram: slows nonessential telemetry, cuts decorative particles, defers heavy models
+    - balanced: standard interface, responsive voice, 2s telemetry, on-demand loading
+    - full: unconstrained visualizer fidelity, fast telemetry, full features
+    """
+    v = str(load_api_keys().get("resource_profile", "balanced")).strip().lower()
+    return v if v in RESOURCE_PROFILES else "balanced"
+
+
+def save_resource_profile(profile: str) -> None:
+    p = str(profile or "").strip().lower()
+    _save_flag("resource_profile", p if p in RESOURCE_PROFILES else "balanced")
+
+
+LAYOUT_MODES = ("tactical", "focus")
+
+
+def get_layout_mode() -> str:
+    """Overall UI layout arrangement:
+    - tactical: full 3-column HUD dashboard (telemetry metrics, visualizer, activity terminal)
+    - focus: streamlined center-focused layout with collapsed telemetry sidebar
+    """
+    v = str(load_api_keys().get("layout_mode", "tactical")).strip().lower()
+    return v if v in LAYOUT_MODES else "tactical"
+
+
+def save_layout_mode(mode: str) -> None:
+    m = str(mode or "").strip().lower()
+    _save_flag("layout_mode", m if m in LAYOUT_MODES else "tactical")
 
 
 # ── Live-session tuning ──────────────────────────────────────────────────────
@@ -194,12 +429,12 @@ def get_turn_tuning() -> dict:
             return default
 
     return {
-        "enabled":    bool(cfg.get("enabled", False)),
-        "silence_ms": _int("silence_ms", 550, 200, 3000),
-        "prefix_ms":  _int("prefix_ms", 150, 0, 1000),
-        # "high" = quicker to decide speech has ended.
+        "enabled":    bool(cfg.get("enabled", True)),
+        "silence_ms": _int("silence_ms", 800, 100, 3000),
+        "prefix_ms":  _int("prefix_ms", 100, 0, 1000),
+        # "high" = quicker to decide speech has ended; "default" avoids clipping natural pauses.
         "end_sensitivity":   str(cfg.get("end_sensitivity", "high")).lower(),
-        "start_sensitivity": str(cfg.get("start_sensitivity", "default")).lower(),
+        "start_sensitivity": str(cfg.get("start_sensitivity", "high")).lower(),
     }
 
 
@@ -228,7 +463,7 @@ def get_proactive_audio_enabled() -> bool:
     sentence as not addressed to it, and only changing its mind once the next
     one arrives.
     """
-    return bool(load_api_keys().get("proactive_audio", True))
+    return bool(load_api_keys().get("proactive_audio", False))
 
 
 def save_proactive_audio_enabled(enabled: bool) -> None:
@@ -414,7 +649,20 @@ def get_provider_config(provider_id: str) -> dict:
     """Stored settings for one provider — address, model, key, limits."""
     creds = get_providers().get("creds")
     val = creds.get(provider_id) if isinstance(creds, dict) else None
-    return dict(val) if isinstance(val, dict) else {}
+    res = dict(val) if isinstance(val, dict) else {}
+    if provider_id == "gemini" and not res.get("model"):
+        res["model"] = "gemini-3.5-flash-lite"
+    if provider_id == "elevenlabs" and (not res.get("api_key") or not res.get("voice_id")):
+        vname = load_api_keys().get("voice_name", "")
+        c_info = get_custom_voice_info(vname)
+        if c_info and c_info.get("voice_type") == "elevenlabs":
+            if not res.get("api_key") and c_info.get("elevenlabs_api_key"):
+                res["api_key"] = c_info["elevenlabs_api_key"]
+            if not res.get("voice_id") and c_info.get("elevenlabs_voice_id"):
+                res["voice_id"] = c_info["elevenlabs_voice_id"]
+            if not res.get("model") and c_info.get("elevenlabs_model"):
+                res["model"] = c_info["elevenlabs_model"]
+    return res
 
 
 def get_pipeline() -> dict:
@@ -549,4 +797,41 @@ def save_providers(mode: str = None, pipeline: dict = None, creds: dict = None,
         block["sidecar_first"] = bool(sidecar_first)
 
     data["providers"] = block
+    CONFIG_FILE.write_text(json.dumps(data, indent=4), encoding="utf-8")
+
+
+def get_tts_provider() -> str:
+    """Return 'elevenlabs' if the active voice is an ElevenLabs custom voice, else 'builtin'."""
+    v = get_voice()
+    info = get_custom_voice_info(v)
+    if info and info.get("voice_type") == "elevenlabs":
+        return "elevenlabs"
+    return "builtin"
+
+
+def get_active_elevenlabs_config() -> dict:
+    """Return configuration dict for the active ElevenLabs voice or empty dict."""
+    v = get_voice()
+    info = get_custom_voice_info(v)
+    if info and info.get("voice_type") == "elevenlabs":
+        prov_cfg = get_provider_config("elevenlabs")
+        return {
+            "api_key": info.get("elevenlabs_api_key") or prov_cfg.get("api_key", ""),
+            "voice_id": info.get("elevenlabs_voice_id") or prov_cfg.get("voice_id", ""),
+            "model": info.get("elevenlabs_model") or prov_cfg.get("model", "eleven_flash_v2_5"),
+            "name": info.get("name", v),
+        }
+    return {}
+
+
+def get_elevenlabs_fallback_enabled() -> bool:
+    """Return whether falling back to a built-in voice on ElevenLabs failure is explicitly allowed."""
+    return bool(load_api_keys().get("elevenlabs_fallback_enabled", True))
+
+
+def save_elevenlabs_fallback_enabled(enabled: bool) -> None:
+    """Persist whether fallback to built-in voice is allowed."""
+    ensure_config_dir()
+    data = load_api_keys()
+    data["elevenlabs_fallback_enabled"] = bool(enabled)
     CONFIG_FILE.write_text(json.dumps(data, indent=4), encoding="utf-8")

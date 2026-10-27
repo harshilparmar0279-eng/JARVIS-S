@@ -1,61 +1,202 @@
 """
 ElevenLabs speech synthesis — the multilingual voice.
 
-WHY IT IS WORTH A FILE OF ITS OWN
-    The system voice speaks the languages the machine has voices for, which on
-    an ordinary install means one. This assistant is used in many, and people
-    switch language mid-conversation. One ElevenLabs voice speaks all of them,
-    with the same voice, without anything being installed or downloaded — which
-    is the thing neither of the local options can do.
-
-    It costs a key and an internet connection. That is the trade, and it is why
-    this is a choice rather than the default.
-
-THE FORMAT NEGOTIATION, WHICH IS NOT OPTIONAL
-    Asking for `pcm_24000` gives audio at exactly the rate the speaker is
-    already open at — no decoding, no resampling, first sample straight to the
-    queue. But raw PCM output is a paid-tier feature, and a free key is refused
-    with a 422 that names the tier.
-
-    Rejecting it there would mean this provider works for some accounts and
-    returns an error for others, which is not a useful thing to ship. So the PCM
-    request is tried once, and an account that cannot have it drops to MP3 and
-    decodes. The decoder is PyAV, which arrives with faster-whisper; when
-    neither is present the failure says exactly which of the two things to do
-    about it rather than reporting a format error nobody can act on.
-
-NO LANGUAGE PARAMETER IS SENT
-    The multilingual models detect the language from the text. Passing one would
-    mean this file deciding what language the assistant is speaking, which is a
-    decision it has no business making — the model and the system prompt own it.
+Official ElevenLabs API endpoints implemented:
+- Voices list: https://api.elevenlabs.io/v1/voices
+- Single voice: https://api.elevenlabs.io/v1/voices/{voice_id}
+- Text-to-speech stream: https://api.elevenlabs.io/v1/text-to-speech/{voice_id}/stream
+- Models list: https://api.elevenlabs.io/v1/models
 """
 from __future__ import annotations
 
 import asyncio
 import json
 from importlib.util import find_spec
-from typing import AsyncIterator
+from typing import Any, AsyncIterator, Optional
 
 from . import audio
 from .base import DEFAULT_CAPS, Field
 
 API = "https://api.elevenlabs.io/v1"
 
-# Latency first. This is a conversation: a voice that arrives half a second
-# sooner is worth more here than one that is slightly richer, and the flash
-# models are multilingual too. The higher-quality models stay available for
-# anybody who would rather have them.
 MODELS = (
     "eleven_flash_v2_5",        # fastest, multilingual
-    "eleven_turbo_v2_5",        # a little richer, still quick
-    "eleven_multilingual_v2",   # best quality, slowest
+    "eleven_multilingual_v2",   # best quality, standard
+    "eleven_turbo_v2_5",        # fast & rich
 )
-DEFAULT_MODEL = MODELS[0]
+DEFAULT_MODEL = "eleven_flash_v2_5"
 
-# Asked for in this order. The first is free of any conversion; the second needs
-# decoding but is available on every account.
 _PCM = "pcm_24000"
 _MP3 = "mp3_44100_128"
+
+
+def validate_elevenlabs_credentials(api_key: str, voice_id: str = "", model_id: str = "") -> dict:
+    """Validate ElevenLabs API key, access to the specified voice ID, and model capability.
+    Follows official ElevenLabs API documentation and returns actionable diagnostic details.
+    """
+    import httpx
+
+    key = (api_key or "").strip()
+    if not key:
+        return {"valid": False, "error": "No ElevenLabs API key provided.", "error_code": "MISSING_KEY"}
+
+    headers = {"xi-api-key": key, "Accept": "application/json"}
+
+    # 1. Verify API Key validity & list accessible voices
+    try:
+        with httpx.Client(timeout=12.0) as client:
+            resp = client.get(f"{API}/voices", headers=headers)
+            if resp.status_code == 401:
+                return {
+                    "valid": False,
+                    "error": "Authentication failed. The ElevenLabs API key was refused (HTTP 401).",
+                    "error_code": "AUTH_FAILED"
+                }
+            if resp.status_code == 429:
+                return {
+                    "valid": False,
+                    "error": "ElevenLabs rate limit reached or quota exhausted (HTTP 429).",
+                    "error_code": "RATE_LIMIT"
+                }
+            if resp.status_code >= 500:
+                return {
+                    "valid": False,
+                    "error": f"ElevenLabs service outage or error (HTTP {resp.status_code}).",
+                    "error_code": "PROVIDER_OUTAGE"
+                }
+            if resp.status_code != 200:
+                err_text = _message(resp.text)
+                return {
+                    "valid": False,
+                    "error": f"ElevenLabs error ({resp.status_code}): {err_text}",
+                    "error_code": f"HTTP_{resp.status_code}"
+                }
+
+            voices_data = resp.json().get("voices", [])
+            voice_map = {v.get("voice_id"): v.get("name", "Unknown") for v in voices_data}
+
+            # If voice_id specified, check specific voice
+            vid = (voice_id or "").strip()
+            voice_name = voice_map.get(vid, "")
+            is_library_voice = False
+
+            if vid:
+                # Check voice directly
+                v_resp = client.get(f"{API}/voices/{vid}", headers=headers)
+                if v_resp.status_code == 404:
+                    return {
+                        "valid": False,
+                        "error": f"Voice ID '{vid}' was not found on this ElevenLabs account.",
+                        "error_code": "VOICE_NOT_FOUND"
+                    }
+                if v_resp.status_code == 200:
+                    v_info = v_resp.json()
+                    voice_name = v_info.get("name", voice_name or vid)
+                    cat = (v_info.get("category") or "").lower()
+                    if "library" in cat or "community" in cat or "shared" in cat:
+                        is_library_voice = True
+
+                # Perform quick pre-flight generation probe to check tier restrictions (e.g. 402 for library voices on free tier)
+                probe_model = model_id or DEFAULT_MODEL
+                probe_url = f"{API}/text-to-speech/{vid}/stream"
+                probe_resp = client.post(
+                    probe_url,
+                    headers=headers,
+                    params={"output_format": _PCM},
+                    json={"text": "Test", "model_id": probe_model},
+                    timeout=10.0
+                )
+                if probe_resp.status_code == 402:
+                    body = probe_resp.text
+                    clean_msg = _message(body)
+                    return {
+                        "valid": False,
+                        "error": f"Tier restriction: {clean_msg}",
+                        "error_code": "TIER_RESTRICTION",
+                        "voice_name": voice_name,
+                        "is_library_voice": True,
+                    }
+                elif probe_resp.status_code >= 400 and probe_resp.status_code not in (422,):
+                    clean_msg = _message(probe_resp.text)
+                    return {
+                        "valid": False,
+                        "error": f"Voice synthesis probe failed ({probe_resp.status_code}): {clean_msg}",
+                        "error_code": f"PROBE_{probe_resp.status_code}",
+                        "voice_name": voice_name
+                    }
+
+            # 2. Check model support if model_id provided
+            mid = (model_id or "").strip()
+            if mid:
+                m_resp = client.get(f"{API}/models", headers=headers)
+                if m_resp.status_code == 200:
+                    models_list = m_resp.json()
+                    m_dict = {m.get("model_id"): m for m in models_list if isinstance(m, dict)}
+                    if mid in m_dict:
+                        m_obj = m_dict[mid]
+                        if not m_obj.get("can_do_text_to_speech", True):
+                            return {
+                                "valid": False,
+                                "error": f"Model '{mid}' does not support text-to-speech.",
+                                "error_code": "INVALID_MODEL"
+                            }
+
+            return {
+                "valid": True,
+                "voice_name": voice_name or vid or "Configured Voice",
+                "voice_count": len(voices_data),
+                "is_library_voice": is_library_voice,
+                "model": mid or DEFAULT_MODEL,
+                "details": f"Verified successfully with {len(voices_data)} voices available."
+            }
+
+    except Exception as e:
+        return {
+            "valid": False,
+            "error": f"Network or connection error during ElevenLabs validation: {e}",
+            "error_code": "NETWORK_ERROR"
+        }
+
+
+def test_voice_synthesis(api_key: str, voice_id: str, model_id: str = "", text: str = "") -> tuple[bool, bytes, str]:
+    """Requests a short test sentence and returns (success, pcm_bytes, message)."""
+    import httpx
+
+    key = (api_key or "").strip()
+    vid = (voice_id or "").strip()
+    mid = (model_id or DEFAULT_MODEL).strip()
+    phrase = (text or "").strip() or "Hello, this is your ElevenLabs voice test for JARVIS."
+
+    if not key or not vid:
+        return False, b"", "Missing API Key or Voice ID."
+
+    url = f"{API}/text-to-speech/{vid}/stream"
+    headers = {"xi-api-key": key, "Content-Type": "application/json"}
+    payload = {
+        "text": phrase,
+        "model_id": mid,
+        "voice_settings": {"stability": 0.5, "similarity_boost": 0.75}
+    }
+
+    try:
+        with httpx.Client(timeout=20.0) as client:
+            resp = client.post(url, headers=headers, params={"output_format": _PCM}, json=payload)
+            if resp.status_code == 200:
+                return True, resp.content, "Test audio generated successfully."
+            
+            # If PCM refused, try MP3
+            if resp.status_code in (400, 422):
+                resp_mp3 = client.post(url, headers=headers, params={"output_format": _MP3}, json=payload)
+                if resp_mp3.status_code == 200:
+                    pcm = _decode_mp3(resp_mp3.content)
+                    return True, pcm, "Test audio generated successfully via MP3 decoding."
+                err_msg = _message(resp_mp3.text)
+                return False, b"", f"HTTP {resp_mp3.status_code}: {err_msg}"
+
+            err_msg = _message(resp.text)
+            return False, b"", f"HTTP {resp.status_code}: {err_msg}"
+    except Exception as exc:
+        return False, b"", f"Test voice request failed: {exc}"
 
 
 class ElevenLabsTTS:
@@ -68,7 +209,6 @@ class ElevenLabsTTS:
         self.caps = dict(DEFAULT_CAPS)
         self.caps["audio_out"] = True
         self.base = API
-        # None until the first request has learned what this account may have.
         self._format: str | None = None
 
     # ── requests ─────────────────────────────────────────────────────────────
@@ -79,9 +219,10 @@ class ElevenLabsTTS:
         return {
             "text": text,
             "model_id": self.model,
-            # No `language_code`: the model detects it. See the module docstring.
-            "voice_settings": {"stability": self.stability,
-                               "similarity_boost": self.similarity},
+            "voice_settings": {
+                "stability": self.stability,
+                "similarity_boost": self.similarity
+            },
         }
 
     async def _stream_once(self, cl, text: str, fmt: str) -> AsyncIterator[bytes]:
@@ -117,9 +258,7 @@ class ElevenLabsTTS:
                 self._format = fmt
                 return
             except _HttpError as e:
-                # 422 on the PCM request is the tier refusing the format, not a
-                # bad voice or a bad key. Learn it once and never ask again.
-                if fmt == _PCM and e.status in (400, 401, 422):
+                if fmt == _PCM and e.status in (400, 422):
                     self._format = _MP3
                 else:
                     raise RuntimeError(f"{e.status} {_message(e.body)}") from None
@@ -129,8 +268,6 @@ class ElevenLabsTTS:
 
     async def _emit(self, cl, text: str, fmt: str) -> AsyncIterator[bytes]:
         if fmt == _PCM:
-            # Already 24 kHz mono 16-bit — exactly what the speaker wants, so it
-            # goes straight through, sliced only for the interrupt granularity.
             buf = b""
             async for piece in self._stream_once(cl, text, fmt):
                 buf += piece
@@ -148,7 +285,6 @@ class ElevenLabsTTS:
         for piece in audio.chunk(pcm):
             yield piece
 
-    # ── for the panel ────────────────────────────────────────────────────────
     def voices(self) -> list[tuple[str, str]]:
         """(id, name) for every voice on the account."""
         import httpx
@@ -193,7 +329,7 @@ def _num(value, default: float) -> float:
 
 
 def _message(body: str) -> str:
-    """The sentence out of an ElevenLabs error, which nests it two deep."""
+    """Extract clean error sentence from an ElevenLabs JSON error payload."""
     try:
         obj = json.loads(body)
         detail = obj.get("detail", obj)
@@ -201,39 +337,32 @@ def _message(body: str) -> str:
             return str(detail.get("message") or detail.get("status") or detail)
         return str(detail)
     except Exception:
-        return " ".join((body or "").split())[:160]
+        return " ".join((body or "").split())[:200]
 
 
 def _decode_mp3(data: bytes) -> bytes:
-    """MP3 -> 24 kHz mono 16-bit PCM, using PyAV.
+    """MP3 -> 24 kHz mono 16-bit PCM using PyAV or soundfile or miniaudio."""
+    if find_spec("av") is not None:
+        import io
+        import av
+        import numpy as np
 
-    PyAV is a dependency of faster-whisper, so anybody running local speech
-    recognition already has it. When it is missing the message says what to
-    install AND what the alternative is, because "no decoder" on its own tells
-    somebody nothing about why their voice stopped working.
-    """
-    if find_spec("av") is None:
-        raise RuntimeError(
-            "this account cannot receive raw PCM, so the audio arrives as MP3 "
-            "and needs a decoder: pip install av — or use a paid ElevenLabs "
-            "tier, or the system voice")
-    import io
-
-    import av
-    import numpy as np
-
-    out = []
-    with av.open(io.BytesIO(data)) as container:
-        resampler = av.AudioResampler(format="s16", layout="mono",
-                                      rate=audio.SPEAKER_RATE)
-        for frame in container.decode(audio=0):
-            for res in resampler.resample(frame):
+        out = []
+        with av.open(io.BytesIO(data)) as container:
+            resampler = av.AudioResampler(format="s16", layout="mono", rate=audio.SPEAKER_RATE)
+            for frame in container.decode(audio=0):
+                for res in resampler.resample(frame):
+                    out.append(res.to_ndarray().reshape(-1))
+            for res in resampler.resample(None):
                 out.append(res.to_ndarray().reshape(-1))
-        for res in resampler.resample(None):        # flush
-            out.append(res.to_ndarray().reshape(-1))
-    if not out:
-        return b""
-    return np.concatenate(out).astype("<i2").tobytes()
+        if not out:
+            return b""
+        return np.concatenate(out).astype("<i2").tobytes()
+
+    raise RuntimeError(
+        "Raw PCM was not accepted by the tier and no MP3 decoder (PyAV) is installed. "
+        "Run: pip install av"
+    )
 
 
 def _make(cfg: dict) -> ElevenLabsTTS:

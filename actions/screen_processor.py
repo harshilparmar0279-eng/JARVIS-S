@@ -90,17 +90,38 @@ def _compress(img_bytes: bytes, source_format: str = "PNG") -> tuple[bytes, str]
 
 
 def _capture_screen() -> tuple[bytes, str]:
+    # 1. Primary method: mss
+    if _MSS:
+        try:
+            with mss.mss() as sct:
+                monitors = sct.monitors          # [0] = all combined, [1..n] = real screens
+                target   = monitors[1] if len(monitors) > 1 else monitors[0]
+                shot     = sct.grab(target)
+                png      = mss.tools.to_png(shot.rgb, shot.size)
+                return _compress(png, "PNG")
+        except Exception as e_mss:
+            print(f"[Vision] ⚠️ mss grab failed: {e_mss}, attempting PIL/pyautogui fallback...")
 
-    if not _MSS:
-        raise RuntimeError("mss is not installed. Run: pip install mss")
+    # 2. Fallback: PIL ImageGrab
+    if _PIL:
+        try:
+            import PIL.ImageGrab as IG
+            img = IG.grab(all_screens=True)
+            buf = io.BytesIO()
+            img.save(buf, format="PNG")
+            return _compress(buf.getvalue(), "PNG")
+        except Exception as e_pil:
+            print(f"[Vision] ⚠️ PIL ImageGrab failed: {e_pil}, attempting pyautogui fallback...")
 
-    with mss.mss() as sct:
-        monitors = sct.monitors          # [0] = all combined, [1..n] = real screens
-        target   = monitors[1] if len(monitors) > 1 else monitors[0]
-        shot     = sct.grab(target)
-        png      = mss.tools.to_png(shot.rgb, shot.size)
-
-    return _compress(png, "PNG")
+    # 3. Fallback: pyautogui
+    try:
+        import pyautogui
+        shot = pyautogui.screenshot()
+        buf = io.BytesIO()
+        shot.save(buf, format="PNG")
+        return _compress(buf.getvalue(), "PNG")
+    except Exception as e_pya:
+        raise RuntimeError(f"All screen capture methods failed: {e_pya}")
 
 
 def _cv2_backend() -> int:
