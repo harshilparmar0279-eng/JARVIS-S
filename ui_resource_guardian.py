@@ -163,7 +163,20 @@ class ResourceDiagnosticsOverlay(QWidget):
         self.setFixedSize(self._OW, self._OH)
         self._on_profile_changed = on_profile_changed
         self._guardian = ResourceGuardian.get_instance()
+        self.setAttribute(Qt.WidgetAttribute.WA_OpaquePaintEvent, True)
+        self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        self.setAutoFillBackground(True)
         self._init_ui()
+
+    def paintEvent(self, e):
+        p = QPainter(self)
+        if not p.isActive():
+            return
+        p.setRenderHint(QPainter.RenderHint.Antialiasing)
+        p.fillRect(self.rect(), QColor("#020b14"))
+        p.setPen(QPen(_qcol(C.BRASS_BRIGHT), 1.5))
+        p.drawRoundedRect(QRectF(1, 1, self.width() - 2, self.height() - 2), 6, 6)
+        p.end()
 
     def hideEvent(self, e):
         p = self.parentWidget()
@@ -185,9 +198,12 @@ class ResourceDiagnosticsOverlay(QWidget):
             super().keyPressEvent(e)
 
     def _init_ui(self):
+        self.setObjectName("ResourceDiagnosticsOverlay")
         self.setStyleSheet(f"""
-            QWidget {{
-                background: rgba(3, 14, 26, 0.98);
+            #ResourceDiagnosticsOverlay {{
+                background-color: #020b14;
+                border: 1.5px solid {C.BRASS_BRIGHT};
+                border-radius: 6px;
                 color: {C.TEXT};
                 font-family: 'Courier New';
             }}
@@ -212,11 +228,11 @@ class ResourceDiagnosticsOverlay(QWidget):
         close_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         close_btn.setStyleSheet(f"""
             QPushButton {{
-                background: {C.PANEL2}; color: {C.TEXT_MED};
+                background-color: #061828; color: {C.TEXT_MED};
                 border: 1px solid {C.BORDER}; border-radius: 3px;
             }}
             QPushButton:hover {{
-                background: {C.RED}; color: white; border-color: {C.RED};
+                background-color: {C.RED}; color: #ffffff; border-color: {C.RED};
             }}
         """)
         close_btn.clicked.connect(self.hide)
@@ -225,12 +241,12 @@ class ResourceDiagnosticsOverlay(QWidget):
 
         sep = QFrame()
         sep.setFrameShape(QFrame.Shape.HLine)
-        sep.setStyleSheet(f"color: {C.BORDER}; margin: 2px 0;")
+        sep.setStyleSheet(f"color: {C.BORDER_SOLID}; margin: 2px 0;")
         main_lay.addWidget(sep)
 
         # ── Profile Selector ──────────────────────────────────────────────────
         prof_box = QWidget()
-        prof_box.setStyleSheet(f"background: {C.PANEL2}; border: 1px solid {C.BORDER}; border-radius: 4px;")
+        prof_box.setStyleSheet(f"background-color: #041424; border: 1px solid {C.BORDER_SOLID}; border-radius: 4px;")
         pb_lay = QVBoxLayout(prof_box)
         pb_lay.setContentsMargins(8, 6, 8, 6)
         pb_lay.setSpacing(4)
@@ -270,17 +286,18 @@ class ResourceDiagnosticsOverlay(QWidget):
         # ── Scrollable Diagnostics Content ────────────────────────────────────
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
-        scroll.setStyleSheet(f"background: transparent; border: none;")
+        scroll.setStyleSheet("QScrollArea { background-color: #020b14; border: none; } QScrollBar:vertical { width: 6px; background: #020b14; }")
         
         content = QWidget()
-        content.setStyleSheet("background: transparent;")
+        content.setObjectName("DiagnosticsContent")
+        content.setStyleSheet("#DiagnosticsContent { background-color: #020b14; }")
         c_lay = QVBoxLayout(content)
         c_lay.setContentsMargins(0, 0, 0, 0)
         c_lay.setSpacing(8)
 
         # 1. Live Metrics Grid
         grid_w = QWidget()
-        grid_w.setStyleSheet(f"background: {C.PANEL2}; border: 1px solid {C.BORDER}; border-radius: 4px;")
+        grid_w.setStyleSheet(f"background-color: #041424; border: 1px solid {C.BORDER_SOLID}; border-radius: 4px;")
         glay = QGridLayout(grid_w)
         glay.setContentsMargins(8, 6, 8, 6)
         glay.setSpacing(6)
@@ -297,7 +314,7 @@ class ResourceDiagnosticsOverlay(QWidget):
             ("RUNTIME STATE", self._lbl_state),
         ]):
             box = QWidget()
-            box.setStyleSheet("background: rgba(3, 14, 24, 0.6); border: 1px solid rgba(212, 175, 55, 0.2); border-radius: 3px;")
+            box.setStyleSheet("background-color: #020912; border: 1px solid {C.BORDER_SOLID}; border-radius: 3px;")
             b_lay = QVBoxLayout(box)
             b_lay.setContentsMargins(6, 4, 6, 4)
             b_lay.setSpacing(2)
@@ -318,7 +335,7 @@ class ResourceDiagnosticsOverlay(QWidget):
 
         # 2. Leak Diagnostics & Recommendation
         leak_box = QWidget()
-        leak_box.setStyleSheet(f"background: {C.PANEL2}; border: 1px solid {C.BORDER}; border-radius: 4px;")
+        leak_box.setStyleSheet(f"background-color: #041424; border: 1px solid {C.BORDER_SOLID}; border-radius: 4px;")
         lb_lay = QVBoxLayout(leak_box)
         lb_lay.setContentsMargins(8, 6, 8, 6)
         lb_lay.setSpacing(3)
@@ -337,7 +354,7 @@ class ResourceDiagnosticsOverlay(QWidget):
 
         # 3. Startup & Module Breakdown
         start_box = QWidget()
-        start_box.setStyleSheet(f"background: {C.PANEL2}; border: 1px solid {C.BORDER}; border-radius: 4px;")
+        start_box.setStyleSheet(f"background-color: #041424; border: 1px solid {C.BORDER_SOLID}; border-radius: 4px;")
         sb_lay = QVBoxLayout(start_box)
         sb_lay.setContentsMargins(8, 6, 8, 6)
         sb_lay.setSpacing(3)
@@ -356,7 +373,7 @@ class ResourceDiagnosticsOverlay(QWidget):
 
         # 4. Background Workers
         work_box = QWidget()
-        work_box.setStyleSheet(f"background: {C.PANEL2}; border: 1px solid {C.BORDER}; border-radius: 4px;")
+        work_box.setStyleSheet(f"background-color: #041424; border: 1px solid {C.BORDER_SOLID}; border-radius: 4px;")
         wb_lay = QVBoxLayout(work_box)
         wb_lay.setContentsMargins(8, 6, 8, 6)
         wb_lay.setSpacing(3)

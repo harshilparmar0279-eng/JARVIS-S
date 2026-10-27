@@ -439,14 +439,16 @@ def _open_native(url: str, browser_name: Optional[str], account: Optional[str] =
     session restore) — exactly as if the user had opened it themselves.
     Works on all three of Windows / macOS / Linux.
     """
-    # ── Special rule: YouTube ALWAYS opens in Brave Browser ──
-    from actions.brave_launcher import is_youtube_target, open_in_brave
-    if is_youtube_target(url) or (browser_name and browser_name.lower() == "brave" and "youtube" in str(url).lower()):
-        target = url if url and "youtube" in url.lower() else "https://www.youtube.com/"
-        ok, msg = open_in_brave(target)
+    # ── Centralized Media Routing: YouTube & YouTube Music ──
+    from core.media_router import is_media_target, route_media_command
+    if is_media_target(url) or (browser_name and browser_name.lower() == "brave" and "youtube" in str(url).lower()):
+        cmd = url
+        if browser_name:
+            cmd = f"{browser_name} mein {url}"
+        ok, msg, data = route_media_command(cmd)
         if ok:
-            return outcome.done("browser_control", action="go_to", browser="brave", url=target, message=msg, verified=True)
-        return outcome.failed("browser_control", msg, browser="brave", url=target)
+            return outcome.done("browser_control", action="go_to", browser=data.get("browser", "chrome"), url=data.get("url", url), message=msg, verified=data.get("verified", False))
+        return outcome.failed("browser_control", msg, browser=data.get("browser", "chrome"), url=url)
 
     url = _normalize_url(url) if url and url.strip() else ""
     if url == "about:blank":
@@ -459,28 +461,20 @@ def _open_native(url: str, browser_name: Optional[str], account: Optional[str] =
         # No URL → only a window will open; needs the default browser's exe
         name = _detect_default_browser()
 
-    # ── Special rule: Chrome requires choosing a Google Account / profile ──
+    # ── Chrome profile support (uses requested account if given, else default session) ──
     if name == "chrome":
-        from actions.chrome_launcher import discover_chrome_profiles, match_profile, launch_chrome, format_available_accounts
-        profiles = discover_chrome_profiles()
-        if not account:
-            acc_list = format_available_accounts(profiles)
-            return outcome.failed(
-                "browser_control",
-                f"Which Google account should I use?\nAvailable accounts:\n{acc_list}",
-                browser="chrome", needs_account=True, url=url
-            )
-        matched = match_profile(account, profiles)
-        if not matched:
-            acc_list = format_available_accounts(profiles)
-            return outcome.failed(
-                "browser_control",
-                f"Account '{account}' not found among Chrome profiles.\nAvailable accounts:\n{acc_list}",
-                browser="chrome", requested_account=account, url=url
-            )
-        ok, msg = launch_chrome(matched["dir_name"], url)
+        from actions.chrome_launcher import discover_chrome_profiles, match_profile, launch_chrome
+        profile_dir = ""
+        matched_display = ""
+        if account:
+            profiles = discover_chrome_profiles()
+            matched = match_profile(account, profiles)
+            if matched:
+                profile_dir = matched.get("dir_name", "")
+                matched_display = matched.get("display", "")
+        ok, msg = launch_chrome(profile_dir=profile_dir, url=url)
         if ok:
-            return outcome.done("browser_control", action="go_to", browser="chrome", profile=matched["dir_name"], account=matched["display"], url=url, verified=True)
+            return outcome.done("browser_control", action="go_to", browser="chrome", profile=profile_dir, account=matched_display, url=url, verified=True)
         return outcome.failed("browser_control", msg, browser="chrome", url=url)
 
     # Specific browser → launch its own executable, exactly like the user would.

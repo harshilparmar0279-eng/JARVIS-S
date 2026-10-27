@@ -294,16 +294,27 @@ def open_app(parameters=None, response=None, player=None,
     if not spoken:
         return outcome.failed("open_app", "no application name was given")
 
-    # ── YouTube Special Routing: ALWAYS open YouTube in Brave Browser ──
-    from actions.brave_launcher import is_youtube_target, open_in_brave
-    if is_youtube_target(spoken):
-        ok, msg = open_in_brave("https://www.youtube.com/")
+    # ── Centralized Media Routing: YouTube & YouTube Music ──
+    from core.media_router import is_media_target, route_media_command
+    if is_media_target(spoken):
+        ok, msg, data = route_media_command(spoken, player=player)
+        _log(player, f"JARVIS: {msg}")
         if ok:
-            _log(player, f"JARVIS: {msg}")
-            return outcome.done("open_app", app="YouTube", browser="brave", url="https://www.youtube.com/", verified=True)
+            return outcome.done(
+                "open_app",
+                app=data.get("service", "YouTube"),
+                browser=data.get("browser", "chrome"),
+                url=data.get("url"),
+                verified=data.get("verified", False),
+                message=msg
+            )
         else:
-            _log(player, f"JARVIS: {msg}")
-            return outcome.failed("open_app", msg, app="YouTube", browser="brave")
+            return outcome.failed(
+                "open_app",
+                msg,
+                app=data.get("service", "YouTube"),
+                browser=data.get("browser", "chrome")
+            )
 
     # ── Chrome Special Routing: Ask which Google account / profile to use ──
     if spoken.lower() in ("chrome", "google chrome", "google-chrome"):
@@ -451,8 +462,8 @@ TOOL = {
                     "code' is 'Visual Studio Code'. A two-letter fragment "
                     "matches the wrong program - 'wp' finds WPS Office. Any "
                     "application on the machine works; there is no fixed list. "
-                    "NOTE: YouTube commands ALWAYS open in Brave. "
-                    "Chrome commands require specifying which Google account / profile to use."
+                    "NOTE: YouTube and YouTube Music open in Chrome by default (YOUTUBE_URL / YOUTUBE_MUSIC_URL), "
+                    "unless Brave is explicitly requested. Music commands auto-play on YouTube Music."
                 ),
             },
             "account": {

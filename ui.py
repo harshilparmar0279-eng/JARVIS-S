@@ -2327,6 +2327,35 @@ class CustomizeOverlay(QWidget):
         cancel_btn.clicked.connect(self._cancel)
         btn_row.addWidget(cancel_btn)
 
+        shortcut_btn = QPushButton("◈  DESKTOP SHORTCUT")
+        shortcut_btn.setFixedHeight(32)
+        shortcut_btn.setFont(QFont("Courier New", 7, QFont.Weight.Bold))
+        shortcut_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        shortcut_btn.setStyleSheet("""
+            QPushButton {
+                background: rgba(4, 18, 30, 0.75);
+                color: #8ffcff;
+                border: 1px solid rgba(0, 229, 255, 0.4);
+                border-radius: 4px;
+                padding: 0 10px;
+            }
+            QPushButton:hover {
+                background: rgba(0, 229, 255, 0.15);
+                color: #ffffff;
+                border-color: #00e5ff;
+            }
+        """)
+        def _on_create_shortcut():
+            from core.desktop_shortcut import create_desktop_shortcut
+            ok, msg = create_desktop_shortcut(force=True)
+            if ok:
+                shortcut_btn.setText("✓ SHORTCUT ADDED")
+                shortcut_btn.setStyleSheet("QPushButton { background: #002b1a; color: #00ffaa; border: 1px solid #00ffaa; border-radius: 4px; padding: 0 10px; }")
+            else:
+                shortcut_btn.setText("⚠️ FAILED")
+        shortcut_btn.clicked.connect(_on_create_shortcut)
+        btn_row.addWidget(shortcut_btn)
+
         save_btn = QPushButton("▸  APPLY CHANGES")
         save_btn.setFixedSize(170, 32)
         save_btn.setFont(QFont("Courier New", 8, QFont.Weight.Bold))

@@ -2715,6 +2715,13 @@ def main():
     guardian = ResourceGuardian.get_instance()
     guardian.startup_tracker.mark_start()
 
+    # Automatically ensure Windows Desktop shortcut is present (idempotent)
+    try:
+        from core.desktop_shortcut import create_desktop_shortcut
+        create_desktop_shortcut(force=False)
+    except Exception as e:
+        print(f"[JARVIS] Desktop shortcut check: {e}")
+
     _t_ui0 = time.time()
     ui = JarvisUI("face.png")
     guardian.startup_tracker.record_stage("UI Initialisation", time.time() - _t_ui0)

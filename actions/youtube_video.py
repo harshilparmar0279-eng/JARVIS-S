@@ -62,16 +62,19 @@ def _get_api_key() -> str:
         return json.load(f)["gemini_api_key"]
 
 
-def _open_url(url: str) -> None:
+def _open_url(url: str, browser: str = "chrome") -> None:
     try:
-        from actions.brave_launcher import open_in_brave
-        ok, msg = open_in_brave(url)
+        from core.media_router import route_media_command
+        cmd = url
+        if browser and browser.lower() == "brave":
+            cmd = f"brave mein {url}"
+        ok, msg, _ = route_media_command(cmd)
         if ok:
             print(f"[YouTube] ✅ {msg}")
             return
         print(f"[YouTube] ⚠️ {msg}")
     except Exception as e:
-        print(f"[YouTube] ⚠️ open_in_brave failed: {e}")
+        print(f"[YouTube] ⚠️ Media routing failed: {e}")
 
 def _scrape_first_video_url(query: str) -> str | None:
 
