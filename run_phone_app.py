@@ -14,6 +14,7 @@ from pathlib import Path
 
 BASE_DIR = Path(__file__).resolve().parent
 CLOUDFLARED_EXE = BASE_DIR / "cloudflared.exe"
+LINK_FILE = BASE_DIR / "active_phone_link.txt"
 
 
 def is_port_in_use(port: int) -> bool:
@@ -24,10 +25,10 @@ def is_port_in_use(port: int) -> bool:
 def ensure_dashboard_running():
     """Ensure dashboard server is listening on port 8000."""
     if is_port_in_use(8000):
-        print("[Dashboard] Port 8000 is already active (JARVIS is running).")
+        print("[Dashboard] Port 8000 is already active (JARVIS is running).", flush=True)
         return None
 
-    print("[Dashboard] Starting JARVIS Dashboard backend on port 8000...")
+    print("[Dashboard] Starting JARVIS Dashboard backend on port 8000...", flush=True)
     from dashboard.server import DashboardServer
     srv = DashboardServer()
 
@@ -42,27 +43,14 @@ def ensure_dashboard_running():
     return srv
 
 
-def print_qr_code(url: str):
-    try:
-        import qrcode
-        qr = qrcode.QRCode(border=1)
-        qr.add_data(url)
-        qr.make(fit=True)
-        print("\n--- SCAN WITH PHONE CAMERA ---")
-        qr.print_ascii(invert=True)
-        print("------------------------------\n")
-    except Exception:
-        pass
-
-
 def main():
     if not CLOUDFLARED_EXE.exists():
-        print(f"[Error] cloudflared.exe not found at {CLOUDFLARED_EXE}")
+        print(f"[Error] cloudflared.exe not found at {CLOUDFLARED_EXE}", flush=True)
         sys.exit(1)
 
     ensure_dashboard_running()
 
-    print("[Cloudflare] Launching secure tunnel to port 8000...")
+    print("[Cloudflare] Launching secure tunnel to port 8000...", flush=True)
     cmd = [str(CLOUDFLARED_EXE), "tunnel", "--url", "http://localhost:8000"]
     proc = subprocess.Popen(
         cmd,
@@ -84,25 +72,30 @@ def main():
             break
 
     if tunnel_url:
-        print("\n" + "=" * 65)
-        print("   JARVIS PHONE APP IS READY FOR 5G / REMOTE USE!   ")
-        print("=" * 65)
-        print(f"\n   LINK: {tunnel_url}\n")
-        print("=" * 65)
-        print("HOW TO INSTALL AS SEPARATE APP ON PHONE:")
-        print("1. Phone ke Chrome ya Brave browser me yeh link kholein.")
-        print("2. Browser ke menu (⋮) me jakar 'Install app' ya 'Add to Home screen' dabayein.")
-        print("3. Phone par JARVIS ka alag app icon ban jayega!")
-        print("=" * 65 + "\n")
-        print_qr_code(tunnel_url)
-        print("[Status] Tunnel is LIVE! Press Ctrl+C to stop.\n")
+        LINK_FILE.write_text(tunnel_url.strip(), encoding="utf-8")
+        banner = f"""
+=================================================================
+   JARVIS PHONE APP IS READY FOR 5G / REMOTE USE!   
+=================================================================
+
+   LINK: {tunnel_url}
+
+=================================================================
+HOW TO INSTALL AS SEPARATE APP ON PHONE:
+1. Phone ke Chrome ya Brave browser me yeh link kholein.
+2. Browser ke menu (3 dots) me jakar 'Install app' ya 'Add to Home screen' dabayein.
+3. Phone par JARVIS ka alag app icon ban jayega!
+=================================================================
+"""
+        print(banner, flush=True)
+        print("[Status] Tunnel is LIVE! Keep this process running.", flush=True)
     else:
-        print("[Warning] Could not extract tunnel URL automatically.")
+        print("[Warning] Could not extract tunnel URL automatically.", flush=True)
 
     try:
         proc.wait()
     except KeyboardInterrupt:
-        print("\n[Status] Stopping tunnel...")
+        print("\n[Status] Stopping tunnel...", flush=True)
         proc.terminate()
 
 

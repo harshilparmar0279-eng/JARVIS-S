@@ -59,3 +59,4 @@ config/chrome_profiles.json
 
 # Cloudflare Tunnel binary
 cloudflared.exe
+active_phone_link.txt
