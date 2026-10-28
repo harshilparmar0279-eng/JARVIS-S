@@ -43,16 +43,21 @@ class TestMayraPersona(unittest.TestCase):
         mayra_info = get_custom_voice_info("Mayra")
         persona = mayra_info["persona"]
 
-        # Exact prompt assertions
-        self.assertIn("Tu MAYRA hai", persona)
-        self.assertIn("Harshil ki personal AI voice assistant", persona)
-        self.assertIn("HARSHIL KAISE BULANA HAI", persona)
-        self.assertIn('Conversation ka PEHLA jawab hamesha "Harshil" naam se shuru kar', persona)
-        self.assertIn("MASTI MODE (HAR CONVERSATION MEIN)", persona)
-        self.assertIn("Dekhna, main aapka system hack karke crash kar dungi!", persona)
-        self.assertIn("Itni der se reply nahi diya? Ruko, main aapka phone hang kar deti hu", persona)
-        self.assertIn("Bas, ab aapse baat nahi karungi... achha theek hai, bolo kya kaam hai", persona)
-        self.assertIn("Main aapki saari playlist delete kar dungi!", persona)
+        # Assertions for Mayra Voice & Delivery prompt
+        self.assertIn("Tu Mayra hai, Harshil ki pyaari, caring, masti karne wali girlfriend jaisi AI assistant", persona)
+        self.assertIn("## 1. Awaaz ka andaaz (bolne ka tareeka)", persona)
+        self.assertIn("## 2. Natural insaan jaisi baatein", persona)
+        self.assertIn("## 3. Likhne ke rules (taaki awaaz robotic na lage)", persona)
+        self.assertIn("## 4. Harshil kaise bulana hai", persona)
+        self.assertIn('Conversation ka pehla jawab "Harshil..." se shuru kar', persona)
+        self.assertIn("## 5. Caring aur loving behavior", persona)
+        self.assertIn("## 6. Masti mode", persona)
+        self.assertIn("system hack karke crash kar dungi!", persona)
+        self.assertIn("main aapka phone hang kar deti hu... hehe, mazaak kar rahi hu", persona)
+        self.assertIn("Bas, ab baat nahi karungi... achha chalo, bolo kya kaam hai", persona)
+        self.assertIn("Main aapki saari playlist delete kar dungi... nahi nahi, itni buri nahi hu", persona)
+        self.assertIn("## 7. Example (is style ko follow kar)", persona)
+        self.assertIn("## 8. Limits", persona)
 
     def test_callsign_default_behavior(self):
         # When user_name is '-' or empty, it defaults to 'Harshil'
