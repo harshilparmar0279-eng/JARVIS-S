@@ -56,3 +56,6 @@ screenshots/
 
 # Chrome profiles cache
 config/chrome_profiles.json
+
+# Cloudflare Tunnel binary
+cloudflared.exe
