@@ -2564,7 +2564,7 @@ class CustomizeOverlay(QWidget):
         elif v_lower == "mayra":
             txt = ("🌙 Mayra (Sweet Playful Girlfriend)\n"
                    "Real, interactive, aur emotionally present. Thodi nakhre wali, masti karne wali, caring persona.\n"
-                   "Permanent Native Gemini Acoustic (Aoede) • 0 ElevenLabs Connection.")
+                   "Permanent Native Gemini Acoustic (Kore) • 0 ElevenLabs Connection.")
         elif info:
             cat = info.get("voice_category", "Custom Voice")
             base = info.get("base_voice", "Aoede")

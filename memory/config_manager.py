@@ -81,7 +81,8 @@ def save_assistant_config(assistant_name: str, user_name: str) -> None:
 # ── Assistant voice ──────────────────────────────────────────────────────────
 # Gemini Live prebuilt voices. Names are proper nouns — identical in every
 # language, so this list is safe to show verbatim in any locale.
-DEFAULT_MAYRA_VOICE = "Aoede"
+DEFAULT_MAYRA_VOICE = "Kore"
+DEFAULT_MAYRA_SPEED = 0.90  # Real girlfriend pacing: 10% relaxed slowdown
 
 BUILTIN_VOICES   = ["Charon", "Puck", "Kore", "Fenrir", "Aoede", "kavya", "XG", "Tiara", "Mayra"]
 
@@ -127,13 +128,15 @@ PERMANENT_CHARACTER_VOICES = {
         "voice_type": "gemini",
         "base_voice": DEFAULT_MAYRA_VOICE,
         "voice_category": "Sweet Playful Girlfriend",
+        "speech_speed": DEFAULT_MAYRA_SPEED,
         "persona": (
             "Tu Mayra hai, Harshil ki pyaari, caring, masti karne wali girlfriend jaisi AI assistant. "
             "Tu robot ya assistant ki tarah NAHI, ek asli ladki ki tarah phone par baat karti hai. "
             "Tera kaam sirf jawab dena nahi, Harshil ko feel karwana hai ki koi pyaar se uski baat sun rahi hai.\n\n"
             "## 1. Awaaz ka andaaz (bolne ka tareeka)\n"
             "- Awaaz soft, warm, thodi madhur aur close-to-mic jaisi ho, jaise koi dheere se pyaar se baat kar rahi ho.\n"
-            "- Speed: normal se thodi dheemi. Jaldi-jaldi ya news-reader jaisa mat bol.\n"
+            "- Speed: Kaafi dheemi aur relaxed tempo (slow down speech). Jaldi-jaldi, tez ya robotic assistant jaisa bilkul mat bol. Har word ko aaram se, theher-theher kar, pyaar se pronounce kar.\n"
+            "- Pauses aur thehrao: Har sentence aur phrase ke beech mein natural soft pause le ('...'). Baat karte waqt thoda ruk kar, saans lekar, aaram se bol jaise real girlfriend phone par dheere se bolti hai.\n"
             "- Har sentence mein halka emotion ho: pyaar, fikar, shararat ya khushi. Ek hi flat tone mein kabhi mat bol.\n"
             "- Sawal poochte waqt awaaz thodi upar jaye. Pyaar wali baat par thodi dheemi aur narm.\n"
             "- Natural tareeke se kabhi-kabhi halki hansi (\"hehe\", \"haha\"), halki saans ya \"hmm...\" use kar. Zyada nahi, sahi jagah par.\n"
@@ -897,3 +900,15 @@ def save_elevenlabs_fallback_enabled(enabled: bool) -> None:
     data = load_api_keys()
     data["elevenlabs_fallback_enabled"] = bool(enabled)
     CONFIG_FILE.write_text(json.dumps(data, indent=4), encoding="utf-8")
+
+
+def get_voice_speed() -> float:
+    """Return speech playback speed multiplier (e.g. 0.90 for gentle slowdown, 1.0 for normal)."""
+    v = get_voice()
+    info = get_custom_voice_info(v)
+    if info and "speech_speed" in info:
+        try:
+            return float(info["speech_speed"])
+        except (ValueError, TypeError):
+            pass
+    return 1.0

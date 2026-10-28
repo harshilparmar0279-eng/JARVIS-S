@@ -168,7 +168,7 @@ _TAIL_MARGIN = 0.08
 # seconds is twenty-five times the measured first response, which leaves room
 # for a slow tool call (those send their own traffic, which clears the deadline)
 # while turning an unbounded hang into a blip.
-_STALL_LIMIT = 30.0
+_STALL_LIMIT = 60.0
 
 _VIS_WIN = 1024        # ~43 ms analysis window at 24 kHz: enough for formants
 _VIS_HOP = 480         # 20 ms between frames, i.e. 50 shapes a second
@@ -185,6 +185,40 @@ _CURSOR_SLACK = 0.15
 # slightly before the sound far better than one that moves after it — the
 # broadcast limits are about 45 ms of lag against 125 ms of lead — so where
 # this is uncertain it is biased to lead.
+
+
+def _wsola_slowdown(samples: np.ndarray, rate: float = 0.90, sr: int = 24000) -> np.ndarray:
+    """Time-stretch audio by rate (e.g. 0.90 = 10% slower) preserving 100% exact pitch.
+    Uses Waveform Similarity Overlap-Add (WSOLA) on 16-bit mono PCM.
+    """
+    if rate >= 0.99 or rate <= 0.5 or len(samples) == 0:
+        return samples
+    win_size = int(sr * 0.025)   # 25ms window (600 samples)
+    hop_out = int(win_size / 2)  # 12.5ms hop
+    hop_in = max(1, int(hop_out * rate))
+    
+    if len(samples) < win_size + hop_in:
+        return samples
+        
+    num_hops = int((len(samples) - win_size) / hop_in)
+    if num_hops <= 0:
+        return samples
+        
+    out_len = num_hops * hop_out + win_size
+    output = np.zeros(out_len, dtype=np.float32)
+    norm = np.zeros(out_len, dtype=np.float32)
+    window = np.hanning(win_size).astype(np.float32)
+    
+    x = samples.astype(np.float32)
+    for i in range(num_hops):
+        in_pos = i * hop_in
+        out_pos = i * hop_out
+        output[out_pos : out_pos + win_size] += x[in_pos : in_pos + win_size] * window
+        norm[out_pos : out_pos + win_size] += window
+        
+    mask = norm > 1e-4
+    output[mask] /= norm[mask]
+    return np.clip(output, -32768, 32767).astype(np.int16)
 
 
 def _pcm_visemes(samples, sr: int = 24000):
@@ -592,6 +626,7 @@ class JarvisLive:
         self._vision_last_time     = 0.0     # monotonic time of last screen_process call (cooldown guard)
         self._vision_busy          = False   # True while a vision capture/inject cycle is in flight
         self._interrupted          = False   # True while draining audio after user interrupt
+        self._cancelled_tool_ids   = set()   # tool calls cancelled by server mid-flight
         self._elevenlabs_disabled  = False   # Auto-disabled if 402/quota limit reached
         self._elevenlabs_warned    = False
         # Which engine is holding the conversation, and what it can do.
@@ -941,6 +976,8 @@ class JarvisLive:
     def _on_text_command(self, text: str):
         if not self._loop or not self.session:
             return
+        self._interrupted = False
+        self._last_user_speech = time.monotonic()
         # Respect wake-word sleep: a typed command must not be answered while
         # asleep either (the sleep gate is not just for the mic). Wake first with
         # "Hey Jarvis" or the WAKE NOW button.
@@ -996,6 +1033,13 @@ class JarvisLive:
             self.ui.set_state("SPEAKING")
         elif not self.ui.muted:
             self.ui.set_state("LISTENING")
+
+    def _get_active_voice_speed(self) -> float:
+        try:
+            from memory.config_manager import get_voice_speed
+            return get_voice_speed()
+        except Exception:
+            return 1.0
 
     def set_push_to_talk(self, enabled: bool) -> str:
         """Turn hold-to-talk on or off. Returns the scope actually achieved."""
@@ -1216,6 +1260,9 @@ class JarvisLive:
                 f"Let your emotion, pauses, and cadence feel like a genuine, caring person talking in a real relationship.\n\n"
             )
             parts.append(_v_ctx)
+            # When character voice is active, suppress default operator [VOICE] rules in sys_prompt
+            # so the "trusted operator reporting to superior / dry understatement" rules do not conflict.
+            sys_prompt = re.sub(r"\[VOICE\][\s\S]*?(?=\n\[|\Z)", "", sys_prompt)
         elif _sel_voice not in BUILTIN_VOICES:
             _v_ctx = (
                 f"[CUSTOM VOICE & VOCAL DELIVERY]\n"
@@ -1295,7 +1342,7 @@ class JarvisLive:
 
         if voice_cfg is None:
             # Easily changeable prebuilt Gemini voice constant for Mayra
-            DEFAULT_MAYRA_VOICE = "Aoede"
+            DEFAULT_MAYRA_VOICE = "Kore"
             _TIMBRE_MAP = {
                 "charon": "Charon",
                 "puck": "Puck",
@@ -1558,6 +1605,9 @@ class JarvisLive:
                 except Exception:
                     break
             self.out_queue.put_nowait({"data": data, "mime_type": "audio/pcm"})
+            if _pcm_level(data) > 0.08:
+                self._interrupted = False
+                self._last_user_speech = time.monotonic()
         except Exception:
             pass
 
@@ -1748,11 +1798,21 @@ class JarvisLive:
         try:
             while True:
                 async for response in self.session.receive():
-                    # Anything at all from the server proves the return path is
-                    # alive, so the stall clock stops here rather than in any of
-                    # the branches below — a tool call, a transcript or a bare
-                    # keepalive all count.
                     self._clear_stall()
+
+                    # ── GoAway & Server Reconnect Warning ────────────────────
+                    if getattr(response, "go_away", None):
+                        print("[JARVIS] 🔄 Server GoAway received — gracefully refreshing live session with resumption")
+                        self.request_reconnect(keep_context=True, reason="server GoAway refresh")
+                        continue
+
+                    # ── Tool Call Cancellation Handling ──────────────────────
+                    _cancelled_tcs = getattr(response, "tool_call_cancellation", None)
+                    if _cancelled_tcs is not None:
+                        _c_ids = set(getattr(_cancelled_tcs, "ids", []) or [])
+                        if _c_ids:
+                            print(f"[JARVIS] ⚠️ Tool call(s) cancelled by server: {_c_ids}")
+                            self._cancelled_tool_ids.update(_c_ids)
 
                     # ── Session resumption ───────────────────────────────────
                     # The server sends this periodically. `resumable` goes false
@@ -1911,16 +1971,27 @@ class JarvisLive:
                                 asyncio.create_task(_cam_close())
 
                     if response.tool_call:
+                        self._interrupted = False  # fresh server activity clears interrupt
                         fn_responses = []
                         for fc in response.tool_call.function_calls:
+                            if fc.id in self._cancelled_tool_ids:
+                                print(f"[JARVIS] ⏭ Skipping cancelled tool call: {fc.name} ({fc.id})")
+                                continue
                             print(f"[JARVIS] 📞 {fc.name}")
                             fr = await self._execute_tool(fc)
-                            fn_responses.append(fr)
-                        await self.session.send_tool_response(
-                            function_responses=fn_responses
-                        )
-                        self._arm_stall()
-                        await self._flush_pending_vision()
+                            if fc.id not in self._cancelled_tool_ids:
+                                fn_responses.append(fr)
+                        if fn_responses:
+                            try:
+                                await self.session.send_tool_response(
+                                    function_responses=fn_responses
+                                )
+                                self._arm_stall()
+                                await self._flush_pending_vision()
+                            except Exception as tr_err:
+                                print(f"[JARVIS] ⚠️ Tool response send error: {tr_err}")
+                                if "1008" in str(tr_err) or "cancel" in str(tr_err).lower() or "closed" in str(tr_err).lower():
+                                    self.request_reconnect(keep_context=True, reason="tool response socket recovery")
         except Exception as e:
             print(f"[JARVIS] ❌ Recv: {e}")
             traceback.print_exc()
@@ -2010,6 +2081,11 @@ class JarvisLive:
                 # level and let the HUD play it out in step with the audio.
                 try:
                     pcm = np.frombuffer(bytes(batch), dtype=np.int16)
+                    # WSOLA gentle slowdown for girlfriend voice if configured
+                    _speed = self._get_active_voice_speed()
+                    if 0.5 <= _speed < 0.99:
+                        pcm = _wsola_slowdown(pcm, rate=_speed, sr=RECEIVE_SAMPLE_RATE)
+
                     hop = _VIS_HOP / RECEIVE_SAMPLE_RATE
                     frames = _pcm_visemes(pcm, sr=RECEIVE_SAMPLE_RATE)
                     # When does this batch become audible? The stream was
@@ -2055,7 +2131,7 @@ class JarvisLive:
                     pass
 
                 try:
-                    await asyncio.to_thread(stream.write, bytes(batch))
+                    await asyncio.to_thread(stream.write, pcm.tobytes())
                 except (RuntimeError, asyncio.CancelledError):
                     break   # executor shutting down — exit cleanly
         except Exception as e:
@@ -2514,9 +2590,14 @@ class JarvisLive:
                     # until the user says "Hey Jarvis" or taps wake in the UI.
                     if self._wake_enabled:
                         self._ensure_wake_detector()
-                        self._awake = False
-                        self.ui.set_state("SLEEPING")
-                        self.ui.write_log("SYS: JARVIS online — sleeping. Say 'Hey Jarvis' to wake me.")
+                        if not _resumed_with:
+                            self._awake = False
+                            self.ui.set_state("SLEEPING")
+                            self.ui.write_log("SYS: JARVIS online — sleeping. Say 'Hey Jarvis' to wake me.")
+                        else:
+                            self._awake = True
+                            self.ui.set_state("LISTENING")
+                            self.ui.write_log("SYS: Continuous session restored — ready.")
                     else:
                         self._awake = True
                         self.ui.set_state("LISTENING")
@@ -2611,6 +2692,13 @@ class JarvisLive:
                     continue
 
                 err_str = str(e)
+                # 1008 / GoAway / ConnectionClosed - normal WebSocket lifecycle cycling
+                if any(k in err_str.lower() for k in ("1008", "goaway", "connectionclosed")):
+                    print(f"[JARVIS] 🔄 WebSocket connection cycled by server ({type(e).__name__}) — refreshing session")
+                    self.ui.write_log("SYS: Refreshing connection — continuing conversation.")
+                    self._conn_backoff = 0
+                    continue
+
                 print(f"[JARVIS] Error ({type(e).__name__}): {e}")
                 traceback.print_exc()
 
