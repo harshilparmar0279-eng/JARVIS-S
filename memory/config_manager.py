@@ -81,8 +81,8 @@ def save_assistant_config(assistant_name: str, user_name: str) -> None:
 # ── Assistant voice ──────────────────────────────────────────────────────────
 # Gemini Live prebuilt voices. Names are proper nouns — identical in every
 # language, so this list is safe to show verbatim in any locale.
-DEFAULT_MAYRA_VOICE = "Kore"
-DEFAULT_MAYRA_SPEED = 0.90  # Real girlfriend pacing: 10% relaxed slowdown
+DEFAULT_MAYRA_VOICE = "Aoede"
+DEFAULT_MAYRA_SPEED = 1.0  # Native Gemini Live natural tempo (sweet human pacing)
 
 BUILTIN_VOICES   = ["Charon", "Puck", "Kore", "Fenrir", "Aoede", "kavya", "XG", "Tiara", "Mayra"]
 

@@ -2456,8 +2456,6 @@ class CustomizeOverlay(QWidget):
 
     def _on_voice_pick(self, name: str):
         self._sel_voice = name
-        if name.lower() == "mayra":
-            self._name_input.setText("Mayra")
         self._refresh_voice_btns()
 
     def _rebuild_voice_pills(self):
@@ -2564,7 +2562,7 @@ class CustomizeOverlay(QWidget):
         elif v_lower == "mayra":
             txt = ("🌙 Mayra (Sweet Playful Girlfriend)\n"
                    "Real, interactive, aur emotionally present. Thodi nakhre wali, masti karne wali, caring persona.\n"
-                   "Permanent Native Gemini Acoustic (Kore) • 0 ElevenLabs Connection.")
+                   "Permanent Native Gemini Acoustic (Aoede) • 0 ElevenLabs Connection.")
         elif info:
             cat = info.get("voice_category", "Custom Voice")
             base = info.get("base_voice", "Aoede")
@@ -5252,6 +5250,7 @@ class MainWindow(QMainWindow):
             self._video_item.nativeSizeChanged.connect(self._fit_video)
             self._video_player.setAudioOutput(self._video_audio)
             self._video_player.errorOccurred.connect(self._on_video_error)
+            self._video_player.mediaStatusChanged.connect(self._on_video_media_status_changed)
 
             # A SECOND player, for sound that arrives separately.
             #
@@ -5268,6 +5267,7 @@ class MainWindow(QMainWindow):
             self._video_sound_out = QAudioOutput()
             self._video_sound_out.setMuted(False)
             self._video_sound.setAudioOutput(self._video_sound_out)
+            self._video_sound.mediaStatusChanged.connect(self._on_video_media_status_changed)
 
             self._video_sync = QTimer(self)
             self._video_sync.setInterval(1000)
@@ -5521,7 +5521,12 @@ class MainWindow(QMainWindow):
         self._video_split = False
         self._video_on = False
         self._hud_cam_stack.setCurrentIndex(0)
-        self._sync_mic_for_video()      # gives the microphone back
+        if self._video_auto_muted:
+            self._video_auto_muted = False
+            self._set_muted(False, "Media finished — microphone restored.")
+        else:
+            self._sync_mic_for_video()      # gives the microphone back
+        self.set_state("LISTENING")
 
     def _set_video_muted(self, muted: bool) -> None:
         """Silence whichever output is carrying the sound for this video."""
@@ -5553,8 +5558,8 @@ class MainWindow(QMainWindow):
         muted, and pressing the mute key during a video hands the decision back
         to them for good.
         """
-        sound_on = bool(self._video_on and self._video_sound_out
-                        and not self._video_sound_out.isMuted())
+        aud = self._video_sound_out if self._video_split else self._video_audio
+        sound_on = bool(self._video_on and aud and not aud.isMuted())
         if sound_on and not self._muted:
             self._video_auto_muted = True
             self._set_muted(True, "The video's sound is on — silence it, close "
@@ -5592,6 +5597,17 @@ class MainWindow(QMainWindow):
         out = self._video_sound_out if self._video_split else self._video_audio
         if out:
             self._set_video_muted(not out.isMuted())
+
+    def _on_video_media_status_changed(self, status) -> None:
+        try:
+            if HAVE_VIDEO and QMediaPlayer is not None and status == QMediaPlayer.MediaStatus.EndOfMedia:
+                self.write_log("SYS: Media playback ended. Restoring JARVIS HUD interface...")
+                self._on_video_close()
+                self.set_state("LISTENING")
+                if callable(getattr(self, "on_media_finished", None)):
+                    self.on_media_finished()
+        except Exception:
+            pass
 
     def _on_video_error(self, *_a) -> None:
         err = ""
@@ -6138,9 +6154,12 @@ class MainWindow(QMainWindow):
         self._title_lbl.setFont(QFont("Courier New", 17, QFont.Weight.Bold))
         self._title_lbl.setStyleSheet(f"color: {C.PRI}; background: transparent;")
         mid.addWidget(self._title_lbl)
-        _sub_text = ("A Friendly Assistant"
-                     if _disp in ("JARVIS", "J.A.R.V.I.S")
-                     else "Personal AI Assistant")
+        from memory.config_manager import get_voice
+        _v_name = (get_voice() or "Mayra").strip().title()
+        if _disp in ("JARVIS", "J.A.R.V.I.S"):
+            _sub_text = f"A Friendly Assistant • Voice: {_v_name}" if _v_name else "A Friendly Assistant"
+        else:
+            _sub_text = f"Personal AI Assistant • Voice: {_v_name}" if _v_name else "Personal AI Assistant"
         self._sub_lbl = QLabel(_sub_text)
         self._sub_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self._sub_lbl.setFont(QFont("Courier New", 7))
@@ -7631,10 +7650,18 @@ class MainWindow(QMainWindow):
         display = self._assistant_name.upper()
         self.setWindowTitle(f"{display} — {APP_VERSION}")
         self._title_lbl.setText(display)
+        from memory.config_manager import get_voice
+        v_disp = (voice or get_voice() or "Mayra").strip().title()
         if display in ("JARVIS", "J.A.R.V.I.S"):
-            self._sub_lbl.setText("Just A Rather Very Intelligent System")
+            if v_disp:
+                self._sub_lbl.setText(f"Just A Rather Very Intelligent System • Voice: {v_disp}")
+            else:
+                self._sub_lbl.setText("Just A Rather Very Intelligent System")
         else:
-            self._sub_lbl.setText("Personal AI Assistant")
+            if v_disp:
+                self._sub_lbl.setText(f"Personal AI Assistant • Voice: {v_disp}")
+            else:
+                self._sub_lbl.setText("Personal AI Assistant")
         self._log._ai_name_lc = self._assistant_name.lower()
         self.hud._assistant_name = display
 
@@ -8045,6 +8072,17 @@ class MainWindow(QMainWindow):
     def _apply_state(self, state: str):
         self.hud.state    = state
         self.hud.speaking = (state == "SPEAKING")
+
+    def set_state(self, state: str) -> None:
+        self._apply_state(state)
+
+    @property
+    def state(self) -> str:
+        return self.hud.state
+
+    def write_log(self, msg: str) -> None:
+        if self._log:
+            self._log.append_log(msg)
 
     def _check_config(self) -> bool:
         if not API_FILE.exists(): return False

@@ -80,13 +80,15 @@ class TestMayraPersona(unittest.TestCase):
         self.assertIn("🌙", btn.text(), "Mayra button must feature the moon icon 🌙")
         self.assertIn("Mayra", btn.text())
 
-        # Test selecting Mayra updates assistant name and preview text
+        # Test selecting Mayra keeps app name as 'JARVIS' and sets voice to 'Mayra'
         cov._on_voice_pick("Mayra")
-        self.assertEqual(cov._name_input.text(), "Mayra", "Assistant Name input should update to 'Mayra'")
+        self.assertEqual(cov._name_input.text(), "JARVIS", "App name must remain 'JARVIS' when picking Mayra voice")
+        self.assertEqual(cov._sel_voice, "Mayra", "Selected voice must be 'Mayra'")
         preview_text = cov._cv_info_lbl.text()
         self.assertIn("Mayra", preview_text)
         self.assertIn("Sweet Playful Girlfriend", preview_text)
         self.assertIn("Permanent Native Gemini Acoustic", preview_text)
+        self.assertIn("Aoede", preview_text)
 
         # Ensure existing character buttons are untouched
         self.assertIn("kavya", cov._voice_btns)

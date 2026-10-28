@@ -81,7 +81,8 @@ cov._on_voice_pick("Tiara")
 assert "tiara" in cov._cv_info_lbl.text().lower(), "Voice info should reflect Tiara"
 cov._on_voice_pick("Mayra")
 assert "mayra" in cov._cv_info_lbl.text().lower(), "Voice info should reflect Mayra"
-assert cov._name_input.text() == "Mayra", "Assistant name should be Mayra when selected"
+assert cov._name_input.text() == "JARVIS", "App title must remain JARVIS when voice is changed"
+assert cov._sel_voice == "Mayra", "Selected voice should be Mayra"
 print("✓ Voice switching updates card cleanly without ElevenLabs connection!")
 
 print("\n--- Testing HudCanvas Floating Dust Particles & Facets ---")

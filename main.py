@@ -1348,7 +1348,7 @@ class JarvisLive:
 
         if voice_cfg is None:
             # Easily changeable prebuilt Gemini voice constant for Mayra
-            DEFAULT_MAYRA_VOICE = "Kore"
+            DEFAULT_MAYRA_VOICE = "Aoede"
             _TIMBRE_MAP = {
                 "charon": "Charon",
                 "puck": "Puck",
@@ -1665,14 +1665,30 @@ class JarvisLive:
             # the echo of what we are playing right now", sustained long enough
             # that a cough or a keystroke cannot trigger it.
             if jarvis_speaking:
-                # Nothing is streamed while JARVIS talks.
-                #
-                # Interrupting by voice used to live here: `EchoGuard` can pick a
-                # user out from under our own echo, and `core/echo.py` still does
-                # that for the tail below. Re-enabling is small — classify each
-                # block here and call interrupt() after `required_blocks` of
-                # agreement — but it depends on the listener's room, so it stays
-                # out until it can be tried on real hardware.
+                # Live Voice Barge-In / Interruption:
+                # Detect if user starts speaking over Jarvis output
+                lvl = _pcm_level(indata)
+                is_user = False
+                try:
+                    if lvl > 0.08:
+                        if self._echo.is_user_speech(indata, SEND_SAMPLE_RATE, lvl) or (lvl > 0.20 and not self._echo.calibrated):
+                            self._barge_blocks = getattr(self, "_barge_blocks", 0) + 1
+                            if self._barge_blocks >= 2:
+                                is_user = True
+                        else:
+                            self._barge_blocks = max(0, getattr(self, "_barge_blocks", 0) - 1)
+                    else:
+                        self._barge_blocks = 0
+                except Exception:
+                    self._barge_blocks = 0
+
+                if is_user:
+                    print(f"[JARVIS] 🎤 Barge-in detected (lvl={lvl:.2f}) — interrupting speech and listening to user")
+                    self._barge_blocks = 0
+                    loop.call_soon_threadsafe(self.interrupt)
+                    if not self.ui.muted and not self._phone_active:
+                        data = indata.tobytes()
+                        loop.call_soon_threadsafe(self._enqueue_mic_audio, data)
                 return
 
             # ── Echo tail ────────────────────────────────────────────────────
@@ -1854,6 +1870,9 @@ class JarvisLive:
 
                     if response.server_content:
                         sc = response.server_content
+                        if getattr(sc, "interrupted", False):
+                            print("[JARVIS] ⚡ Gemini Live server confirmed speech interruption")
+                            self.interrupt()
 
                         if sc.output_transcription and sc.output_transcription.text:
                             txt = _clean_transcript(sc.output_transcription.text)
@@ -2090,7 +2109,7 @@ class JarvisLive:
                     pcm = np.frombuffer(bytes(batch), dtype=np.int16)
                     # WSOLA gentle slowdown for girlfriend voice if configured
                     _speed = self._get_active_voice_speed()
-                    if 0.5 <= _speed < 0.99:
+                    if False: # WSOLA slowdown removed to preserve crystal clear natural human voice
                         pcm = _wsola_slowdown(pcm, rate=_speed, sr=RECEIVE_SAMPLE_RATE)
 
                     hop = _VIS_HOP / RECEIVE_SAMPLE_RATE
@@ -2138,7 +2157,8 @@ class JarvisLive:
                     pass
 
                 try:
-                    await asyncio.to_thread(stream.write, pcm.tobytes())
+                    if not self._interrupted:
+                        await asyncio.to_thread(stream.write, pcm.tobytes())
                 except (RuntimeError, asyncio.CancelledError):
                     break   # executor shutting down — exit cleanly
         except Exception as e:
