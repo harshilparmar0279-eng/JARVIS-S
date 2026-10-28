@@ -1300,3 +1300,10 @@ class DashboardServer:
         print(f"[Dashboard] {self.get_url()}")
         print("[Dashboard] Press 'Remote Control' in JARVIS UI to get the QR code.")
         await uvicorn.Server(cfg).serve()
+
+
+if __name__ == '__main__':
+    import asyncio
+    srv = DashboardServer()
+    print('[Dashboard] Starting standalone dashboard server on port 8000...')
+    asyncio.run(srv.serve())
