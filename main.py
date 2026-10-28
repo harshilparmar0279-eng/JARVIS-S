@@ -51,6 +51,9 @@ from google import genai
 from google.genai import types
 from ui import JarvisUI
 from core.resource_guardian import ResourceGuardian
+from core.fast_tts import speak_fast, speak_fast_sync
+from core.task_runner import run_task_in_background
+from core.ram_cleaner import release_unused_ram
 from memory.memory_manager import (
     load_memory, update_memory, format_memory_for_prompt,
     save_session_summary, pop_last_session,
@@ -1138,8 +1141,14 @@ class JarvisLive:
                 pass
         self.ui.write_log("SYS: Interrupted — listening...")
 
+    def speak_fast(self, text: str, voice: str = ""):
+        """Ultra-fast, low-RAM edge-tts voice reply with pygame playback."""
+        v = voice or getattr(self, "selected_voice", "") or "en-US-AriaNeural"
+        run_task_in_background(speak_fast_sync, text, v)
+
     def speak(self, text: str):
         if not self._loop or not self.session:
+            self.speak_fast(text)
             return
         asyncio.run_coroutine_threadsafe(
             self.session.send_client_content(
@@ -1152,7 +1161,7 @@ class JarvisLive:
     def speak_error(self, tool_name: str, error: str):
         short = str(error)[:120]
         self.ui.write_log(f"ERR: {tool_name} — {short}")
-        self.speak(f"Sir, {tool_name} encountered an error. {short}")
+        self.speak_fast(f"Sir, {tool_name} encountered an error. {short}")
 
     def _build_config(self) -> types.LiveConnectConfig:
         from datetime import datetime
@@ -1600,6 +1609,10 @@ class JarvisLive:
         _sched = (self._action_registry.scheduling(name)
                   or self._plugin_registry.scheduling(name))
         _extra = {"scheduling": _sched} if _sched else {}
+        try:
+            release_unused_ram()
+        except Exception:
+            pass
         return types.FunctionResponse(
             id=fc.id, name=name,
             response={"result": result},
@@ -1917,6 +1930,10 @@ class JarvisLive:
                                 continue
 
                             full_in = " ".join(in_buf).strip()
+                            try:
+                                release_unused_ram()
+                            except Exception:
+                                pass
                             if full_in:
                                 self._last_out_logged = ""   # new exchange
                                 self.ui.write_log(f"You: {full_in}")

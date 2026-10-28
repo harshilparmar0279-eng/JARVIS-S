@@ -235,6 +235,17 @@ class ResourceGuardian:
             elif not self._active_optional_features and self._state == "OPTIONAL_FEATURES":
                 self._state = "IDLE"
 
+    def clean_memory(self) -> dict:
+        """Trigger smart RAM release: runs Python GC and empties Windows working set."""
+        from core.ram_cleaner import release_unused_ram
+        res = release_unused_ram()
+        with self._lock:
+            # Update peak and baseline if needed
+            rss_now = self._read_rss_mb()
+            if self._baseline_rss_mb is None or rss_now < self._baseline_rss_mb:
+                self._baseline_rss_mb = rss_now
+        return res
+
     # ── Memory Growth & Leak Diagnostics ─────────────────────────────────────
 
     def analyze_memory(self) -> dict:
