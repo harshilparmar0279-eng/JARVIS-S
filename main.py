@@ -376,7 +376,8 @@ def _load_system_prompt() -> str:
         return (
             "You are JARVIS, Tony Stark's AI assistant. "
             "Be concise, direct, and always use the provided tools to complete tasks. "
-            "Never simulate or guess results — always call the appropriate tool."
+            "Never simulate or guess results — always call the appropriate tool. "
+            "CRITICAL RULE: You are a precise browser automation agent. If the user's command is unclear, ambiguous, or does not imply a specific website, DO NOT guess. Strictly DO NOT open 'about:blank'. DO NOT default to 'youtube.com' or any other popular site. If you do not know the exact URL required, immediately halt the browser action and ask the user for clarification."
         )
 
 _CTRL_RE = re.compile(r"<ctrl\d+>", re.IGNORECASE)

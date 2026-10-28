@@ -430,6 +430,20 @@ _MAC_APP_NAMES: dict[str, str] = {
 _WIN_EXE_HINTS: dict[str, str] = {"chrome": "chrome", "edge": "msedge"}
 
 
+def validate_and_open_url(target_url) -> bool:
+    """Validate target URL before browser operations to prevent hallucinations.
+    
+    Blocks empty URLs, 'about:blank', and default start tabs.
+    """
+    clean = str(target_url or "").strip().lower()
+    if target_url in ["", "about:blank", "chrome://newtab/"] or clean in ["", "about:blank", "chrome://newtab/", "about://blank"]:
+        print("Jarvis: Mujhe task clear nahi hai. Kripya specific website ya action batayein.")
+        return False
+    # Code to open browser with target_url
+    print(f"Opening {target_url}...")
+    return True
+
+
 def _open_native(url: str, browser_name: Optional[str], account: Optional[str] = None) -> str:
     """
     Opens the user's REAL browser normally — with their own profile,
@@ -449,6 +463,15 @@ def _open_native(url: str, browser_name: Optional[str], account: Optional[str] =
         if ok:
             return outcome.done("browser_control", action="go_to", browser=data.get("browser", "chrome"), url=data.get("url", url), message=msg, verified=data.get("verified", False))
         return outcome.failed("browser_control", msg, browser=data.get("browser", "chrome"), url=url)
+
+    # Validate target URL: Strictly halt and ask for clarification if URL is ambiguous/empty/about:blank
+    if not browser_name or url:
+        if not validate_and_open_url(url):
+            return outcome.failed(
+                "browser_control",
+                "Jarvis: Mujhe task clear nahi hai. Kripya specific website ya action batayein.",
+                url=url
+            )
 
     url = _normalize_url(url) if url and url.strip() else ""
     if url == "about:blank":
@@ -1142,9 +1165,19 @@ def browser_control(
                     result = sess.run(sess.search(params.get("query", ""),
                                                   params.get("engine", "google")))
                 elif action == "new_tab":
-                    result = sess.run(sess.new_tab(params.get("url", "")))
+                    target_url = params.get("url", "")
+                    if not validate_and_open_url(target_url):
+                        clarification_msg = "Jarvis: Mujhe task clear nahi hai. Kripya specific website ya action batayein."
+                        _log(player, clarification_msg)
+                        return outcome.failed("browser_control", clarification_msg, url=target_url)
+                    result = sess.run(sess.new_tab(target_url))
                 else:
-                    result = sess.run(sess.go_to(params.get("url", "")))
+                    target_url = params.get("url", "")
+                    if not validate_and_open_url(target_url):
+                        clarification_msg = "Jarvis: Mujhe task clear nahi hai. Kripya specific website ya action batayein."
+                        _log(player, clarification_msg)
+                        return outcome.failed("browser_control", clarification_msg, url=target_url)
+                    result = sess.run(sess.go_to(target_url))
             except concurrent.futures.TimeoutError:
                 result = f"Browser action '{action}' timed out (60s)."
             except Exception as e:
@@ -1158,6 +1191,10 @@ def browser_control(
             nav_url = base + params.get("query", "").replace(" ", "+")
         else:
             nav_url = params.get("url", "").strip()
+            if not validate_and_open_url(nav_url):
+                clarification_msg = "Jarvis: Mujhe task clear nahi hai. Kripya specific website ya action batayein."
+                _log(player, clarification_msg)
+                return outcome.failed("browser_control", clarification_msg, url=nav_url)
 
         account_param = params.get("account")
         result = _open_native(nav_url, browser, account=account_param)

@@ -182,8 +182,10 @@ def launch_chrome(profile_dir: str, url: str = "") -> tuple[bool, str]:
         return False, "Google Chrome is not installed or executable not found."
 
     clean_url = (url or "").strip()
-    if clean_url.lower() in ("about:blank", "blank"):
-        clean_url = ""
+    if clean_url.lower() in ("about:blank", "blank", "chrome://newtab/", "about://blank"):
+        msg = "Jarvis: Mujhe task clear nahi hai. Kripya specific website ya action batayein."
+        print(msg)
+        return False, msg
 
     args = [exe]
     if profile_dir:
