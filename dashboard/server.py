@@ -823,6 +823,46 @@ class DashboardServer:
         async def login_page():
             return HTMLResponse(self._login_html)
 
+        @app.get("/manifest.json")
+        async def manifest():
+            return JSONResponse({
+                "name": "JARVIS AI Assistant",
+                "short_name": "JARVIS",
+                "description": "JARVIS AI Voice & Control Mobile App",
+                "start_url": "/",
+                "display": "standalone",
+                "orientation": "portrait",
+                "background_color": "#000814",
+                "theme_color": "#00e5ff",
+                "icons": [
+                    {
+                        "src": "/icon.png",
+                        "sizes": "192x192",
+                        "type": "image/png",
+                        "purpose": "any maskable"
+                    },
+                    {
+                        "src": "/icon.png",
+                        "sizes": "512x512",
+                        "type": "image/png",
+                        "purpose": "any maskable"
+                    }
+                ]
+            })
+
+        @app.get("/icon.png")
+        async def pwa_icon():
+            icon_p = STATIC_DIR / "icon.png"
+            if not icon_p.exists():
+                try:
+                    from ui import MainWindow
+                    MainWindow._build_jarvis_icon(icon_p)
+                except Exception:
+                    pass
+            if icon_p.exists():
+                return FileResponse(str(icon_p), media_type="image/png")
+            return HTMLResponse("", status_code=404)
+
         @app.get("/", response_class=HTMLResponse)
         async def index():
             # Auth is handled client-side via sessionStorage bearer token.
