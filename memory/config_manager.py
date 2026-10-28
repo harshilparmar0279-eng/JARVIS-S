@@ -84,40 +84,40 @@ def save_assistant_config(assistant_name: str, user_name: str) -> None:
 DEFAULT_MAYRA_VOICE = "Aoede"
 DEFAULT_MAYRA_SPEED = 1.0  # Native Gemini Live natural tempo (sweet human pacing)
 
-BUILTIN_VOICES   = ["Charon", "Puck", "Kore", "Fenrir", "Aoede", "kavya", "XG", "Tiara", "Mayra"]
+BUILTIN_VOICES   = ["Charon", "Puck", "Kore", "Fenrir", "Aoede", "Snow", "Nia", "Dragon", "Mayra"]
 
 PERMANENT_CHARACTER_VOICES = {
-    "kavya": {
-        "name": "kavya",
+    "Snow": {
+        "name": "Snow",
         "voice_type": "gemini",
         "base_voice": "Aoede",
         "voice_category": "Cute Caring Sweet Girlfriend",
         "persona": (
-            "Real, interactive, and emotionally present — Kavya makes every exchange feel like an actual conversation, not a script read back. "
+            "Real, interactive, and emotionally present — Snow makes every exchange feel like an actual conversation, not a script read back. "
             "She picks up on what's being said and responds like she's genuinely listening, pulling people into longer exchanges instead of quick replies. "
             "Tone: Cute Caring Sweet Girlfriend. Female, Conversational, Young, Cute, Sweet, Affectionate, Caring, Calm and Human-paced. Hindi (Standard) & Hinglish."
         ),
         "sample_path": ""
     },
-    "XG": {
-        "name": "XG",
+    "Nia": {
+        "name": "Nia",
         "voice_type": "gemini",
         "base_voice": "Aoede",
         "voice_category": "Warm Emotional Girlfriend",
         "persona": (
-            "Romantic, devoted, and naturally expressive — Deshna Sogam (XG) shifts fluidly between joy, sadness, empathy, and romance within the same conversation. "
+            "Romantic, devoted, and naturally expressive — Nia shifts fluidly between joy, sadness, empathy, and romance within the same conversation. "
             "Her human-like modulation never locks into one register, keeping exchanges responsive and real. "
             "Tone: Warm Emotional Girlfriend. Female, Conversational, Young, Cute, Romantic, Devoted, Empathetic, Expressive and Natural. Hindi (Standard) & Hinglish."
         ),
         "sample_path": ""
     },
-    "Tiara": {
-        "name": "Tiara",
+    "Dragon": {
+        "name": "Dragon",
         "voice_type": "gemini",
         "base_voice": "Kore",
         "voice_category": "Smooth, Soft and Seductive",
         "persona": (
-            "A unique blend of sweetness & husky depth, Tiara’s voice feels intimate, emotionally inviting, and deeply personal. "
+            "A unique blend of sweetness & husky depth, Dragon’s voice feels intimate, emotionally inviting, and deeply personal. "
             "Her vocal tone evokes warmth, trust, and subtle allure, making it ideal for soothing conversations, light flirtation, and emotionally intelligent chats. "
             "Tone: Smooth, Soft and Seductive. Female, Young, Conversational, Husky, Intimate, Alluring, Gentle and Relaxed. Hindi (Standard) & Hinglish."
         ),
@@ -183,6 +183,11 @@ PERMANENT_CHARACTER_VOICES = {
         "sample_path": ""
     }
 }
+# Backward compatibility aliases for renamed voices
+PERMANENT_CHARACTER_VOICES["kavya"] = PERMANENT_CHARACTER_VOICES["Snow"]
+PERMANENT_CHARACTER_VOICES["xg"] = PERMANENT_CHARACTER_VOICES["Nia"]
+PERMANENT_CHARACTER_VOICES["tiara"] = PERMANENT_CHARACTER_VOICES["Dragon"]
+
 DEFAULT_VOICE    = "Charon"
 AVAILABLE_VOICES = list(BUILTIN_VOICES)
 

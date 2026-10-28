@@ -32,7 +32,7 @@ assert "#a855f7" not in [col.lower() for _, col in THEME_PRESETS], "Old purple p
 print("✓ Zero purple in theme presets verified!")
 
 print("\n--- Testing CustomizeOverlay Layout & No-Slider Constraint ---")
-cov = CustomizeOverlay(assistant_name="JARVIS", user_name="Tony", voice="kavya")
+cov = CustomizeOverlay(assistant_name="JARVIS", user_name="Tony", voice="Snow")
 cov.resize(cov._OW, cov._OH)
 cov.show()
 
@@ -43,9 +43,9 @@ print(f"Number of QScrollArea widgets in CustomizeOverlay: {len(scroll_areas)}")
 assert len(scroll_areas) == 0, f"Found QScrollArea in CustomizeOverlay! Sliders must not exist!"
 
 # Verify all key buttons exist
-assert "kavya" in cov._voice_btns, "kavya voice button missing"
-assert "XG" in cov._voice_btns, "XG voice button missing"
-assert "Tiara" in cov._voice_btns, "Tiara voice button missing"
+assert "Snow" in cov._voice_btns, "Snow voice button missing"
+assert "Nia" in cov._voice_btns, "Nia voice button missing"
+assert "Dragon" in cov._voice_btns, "Dragon voice button missing"
 assert "Mayra" in cov._voice_btns, "Mayra voice button missing"
 for v in ("Charon", "Puck", "Kore", "Fenrir", "Aoede"):
     assert v in cov._voice_btns, f"{v} voice button missing"
@@ -71,14 +71,14 @@ print("✓ All 6 Theme Preset buttons present!")
 assert cov._cv_info_box.isVisible(), "Active voice info box should be visible"
 info_text = cov._cv_info_lbl.text()
 print(f"Active Voice Info Card Text:\n{info_text}")
-assert "kavya" in info_text.lower(), "Voice info should reflect kavya"
+assert "snow" in info_text.lower(), "Voice info should reflect snow"
 assert "gemini" in info_text.lower(), "Voice info should indicate Gemini Native"
 
-# Test switching voice to XG, Tiara and Mayra
-cov._on_voice_pick("XG")
-assert "xg" in cov._cv_info_lbl.text().lower(), "Voice info should reflect XG"
-cov._on_voice_pick("Tiara")
-assert "tiara" in cov._cv_info_lbl.text().lower(), "Voice info should reflect Tiara"
+# Test switching voice to Nia, Dragon and Mayra
+cov._on_voice_pick("Nia")
+assert "nia" in cov._cv_info_lbl.text().lower(), "Voice info should reflect Nia"
+cov._on_voice_pick("Dragon")
+assert "dragon" in cov._cv_info_lbl.text().lower(), "Voice info should reflect Dragon"
 cov._on_voice_pick("Mayra")
 assert "mayra" in cov._cv_info_lbl.text().lower(), "Voice info should reflect Mayra"
 assert cov._name_input.text() == "JARVIS", "App title must remain JARVIS when voice is changed"

@@ -1355,10 +1355,14 @@ class JarvisLive:
                 "kore": "Kore",
                 "fenrir": "Fenrir",
                 "aoede": "Aoede",
+                "snow": "Aoede",
+                "nia": "Aoede",
+                "dragon": "Kore",
+                "mayra": DEFAULT_MAYRA_VOICE,
+                # Backward compatibility aliases
                 "kavya": "Aoede",
                 "xg": "Aoede",
                 "tiara": "Kore",
-                "mayra": DEFAULT_MAYRA_VOICE,
             }
             v_low = (selected_voice or "").strip().lower()
             if v_low in _TIMBRE_MAP:

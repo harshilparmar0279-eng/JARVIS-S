@@ -20,11 +20,17 @@ from memory.config_manager import (
     get_custom_voice_info,
     get_assistant_name,
     get_voice,
+    save_voice,
+    save_assistant_config,
 )
 from core.echo import EchoGuard
 
 
 class TestVoiceBargeAndMedia(unittest.TestCase):
+    def setUp(self):
+        save_assistant_config("JARVIS", "Harshil")
+        save_voice("Mayra")
+
     def test_mayra_timbre_and_speed_natural(self):
         """Ensure Mayra uses sweet human timbre Aoede and pure 1.0 natural tempo."""
         self.assertEqual(DEFAULT_MAYRA_VOICE, "Aoede", "Mayra must use sweet Aoede timbre")

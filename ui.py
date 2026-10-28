@@ -2190,9 +2190,9 @@ class CustomizeOverlay(QWidget):
         right_lay.addWidget(_sub_lbl("◈  VOICE TONE / PERSONA PRESET CHIPS", "#00e5ff"))
         tone_chips_row = QHBoxLayout(); tone_chips_row.setSpacing(4)
         tone_presets = [
-            ("Cute & Caring", "kavya"),
-            ("Romantic Warm", "XG"),
-            ("Intimate Seductive", "Tiara"),
+            ("Cute & Caring", "Snow"),
+            ("Romantic Warm", "Nia"),
+            ("Intimate Seductive", "Dragon"),
             ("Mayra Masti", "Mayra"),
             ("Formal Butler", "Charon"),
             ("Crisp Balanced", "Kore"),
@@ -2480,7 +2480,7 @@ class CustomizeOverlay(QWidget):
         self._voice_container_lay.addWidget(lbl_p)
 
         row_char = QHBoxLayout(); row_char.setSpacing(4)
-        for _v, _badge in [("kavya", "🌸 Kavya"), ("XG", "🔥 XG"), ("Tiara", "✨ Tiara"), ("Mayra", "🌙 Mayra")]:
+        for _v, _badge in [("Snow", "🌸 Snow"), ("Nia", "💖 Nia"), ("Dragon", "✨ Dragon"), ("Mayra", "🌙 Mayra")]:
             b = QPushButton(_badge)
             b.setCheckable(True)
             b.setFixedHeight(24)
@@ -2511,7 +2511,7 @@ class CustomizeOverlay(QWidget):
 
         # Extra customs (if any)
         avail = get_available_voices()
-        extra_customs = [v for v in avail if v not in ("Charon", "Puck", "Kore", "Fenrir", "Aoede", "kavya", "XG", "Tiara", "Mayra")]
+        extra_customs = [v for v in avail if v not in ("Charon", "Puck", "Kore", "Fenrir", "Aoede", "Snow", "Nia", "Dragon", "Mayra", "kavya", "XG", "Tiara")]
         if extra_customs:
             row_custom = QHBoxLayout(); row_custom.setSpacing(4)
             for _v in extra_customs:
@@ -2530,8 +2530,9 @@ class CustomizeOverlay(QWidget):
     def _refresh_voice_btns(self):
         """Highlight active voice button and update info card."""
         from memory.config_manager import get_custom_voice_info
+        v_canonical = {"kavya": "Snow", "xg": "Nia", "tiara": "Dragon"}.get((self._sel_voice or "").lower(), self._sel_voice)
         for name, b in self._voice_btns.items():
-            on = (name == self._sel_voice)
+            on = (name == self._sel_voice or name.lower() == (v_canonical or "").lower())
             b.setChecked(on)
             if on:
                 b.setStyleSheet("""
@@ -2546,17 +2547,17 @@ class CustomizeOverlay(QWidget):
                 """)
 
         info = get_custom_voice_info(self._sel_voice)
-        v_lower = self._sel_voice.lower()
-        if v_lower == "kavya":
-            txt = ("🌸 Kavya (Cute Caring Sweet Girlfriend)\n"
-                   "Real, interactive, and emotionally present — Kashvi persona.\n"
+        v_lower = (self._sel_voice or "").lower()
+        if v_lower in ("snow", "kavya"):
+            txt = ("🌸 Snow (Cute Caring Sweet Girlfriend)\n"
+                   "Real, interactive, and emotionally present — Snow persona.\n"
                    "Permanent Native Gemini Acoustic (Aoede) • 0 ElevenLabs Connection.")
-        elif v_lower == "xg":
-            txt = ("🔥 XG (Warm Emotional Girlfriend)\n"
-                   "Romantic, devoted, naturally expressive — Deshna Sogam persona.\n"
+        elif v_lower in ("nia", "xg"):
+            txt = ("💖 Nia (Warm Emotional Girlfriend)\n"
+                   "Romantic, devoted, naturally expressive — Nia persona.\n"
                    "Permanent Native Gemini Acoustic (Aoede) • 0 ElevenLabs Connection.")
-        elif v_lower == "tiara":
-            txt = ("✨ Tiara (Smooth, Soft and Seductive)\n"
+        elif v_lower in ("dragon", "tiara"):
+            txt = ("✨ Dragon (Smooth, Soft and Seductive)\n"
                    "Sweetness & husky depth, intimate and personal warmth.\n"
                    "Permanent Native Gemini Acoustic (Kore) • 0 ElevenLabs Connection.")
         elif v_lower == "mayra":
@@ -2573,7 +2574,7 @@ class CustomizeOverlay(QWidget):
                    "Direct low-latency speech synthesis.")
 
         self._cv_info_lbl.setText(txt)
-        is_perm = v_lower in ("charon", "puck", "kore", "fenrir", "aoede", "kavya", "xg", "tiara", "mayra")
+        is_perm = v_lower in ("charon", "puck", "kore", "fenrir", "aoede", "snow", "nia", "dragon", "mayra", "kavya", "xg", "tiara")
         self._cv_del_btn.setVisible(not is_perm)
         self._cv_test_active_btn.setVisible(not is_perm)
 

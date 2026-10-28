@@ -28,7 +28,7 @@ class TestMayraPersona(unittest.TestCase):
     def test_mayra_in_builtin_voices(self):
         self.assertIn("Mayra", BUILTIN_VOICES, "Mayra must be present in BUILTIN_VOICES")
         # Ensure all existing voices are untouched
-        for existing in ("Charon", "Puck", "Kore", "Fenrir", "Aoede", "kavya", "XG", "Tiara"):
+        for existing in ("Charon", "Puck", "Kore", "Fenrir", "Aoede", "Snow", "Nia", "Dragon"):
             self.assertIn(existing, BUILTIN_VOICES, f"Existing voice {existing} must be preserved")
 
     def test_mayra_character_voice_config(self):
@@ -90,10 +90,10 @@ class TestMayraPersona(unittest.TestCase):
         self.assertIn("Permanent Native Gemini Acoustic", preview_text)
         self.assertIn("Aoede", preview_text)
 
-        # Ensure existing character buttons are untouched
-        self.assertIn("kavya", cov._voice_btns)
-        self.assertIn("XG", cov._voice_btns)
-        self.assertIn("Tiara", cov._voice_btns)
+        # Ensure companion character buttons are present
+        self.assertIn("Snow", cov._voice_btns)
+        self.assertIn("Nia", cov._voice_btns)
+        self.assertIn("Dragon", cov._voice_btns)
 
 
 if __name__ == "__main__":
