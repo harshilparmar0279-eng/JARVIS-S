@@ -627,6 +627,7 @@ class JarvisLive:
         self._vision_busy          = False   # True while a vision capture/inject cycle is in flight
         self._interrupted          = False   # True while draining audio after user interrupt
         self._cancelled_tool_ids   = set()   # tool calls cancelled by server mid-flight
+        self._has_greeted_by_name  = False   # First greeting uses Harshil, subsequent strictly Sir
         self._elevenlabs_disabled  = False   # Auto-disabled if 402/quota limit reached
         self._elevenlabs_warned    = False
         # Which engine is holding the conversation, and what it can do.
@@ -1179,18 +1180,23 @@ class JarvisLive:
             f"Use this to calculate exact times for reminders.\n\n"
         )
 
-        # Identity injection — overrides any hardcoded name in prompt.txt
-        # Address form is a property of the language being spoken, so it is
-        # stated as a principle rather than a two-language lookup — the model
-        # already knows the respectful register of whatever language it is in.
-        _addr = (f"ADDRESS: Always call the user '{_user_name}'."
-                 if _user_name
-                 else 'ADDRESS: Address the user with the ordinary respectful form '
-                      'for a superior in the language you are currently speaking — '
-                      '"sir" in English, its everyday equivalent in any other '
-                      'language. Never an archaic or aristocratic form, and never '
-                      'the form from a different language than the one you are '
-                      'speaking in this sentence.')
+        # Strict Addressing Protocol: Greet by name 'Harshil' once on boot/first greeting;
+        # on ALL subsequent interactions, strictly address as 'Sir'.
+        if not getattr(self, "_has_greeted_by_name", False):
+            _addr = (
+                f"ADDRESSING PROTOCOL (FIRST INTERACTION OF SESSION):\n"
+                f"In your very first response of this session, greet the user by name '{_user_name}' once "
+                f"(e.g. 'Hello {_user_name}, Jarvis is online. How can I help you, Sir?'). "
+                f"Immediately after that initial greeting, transition to calling him 'Sir'."
+            )
+        else:
+            _addr = (
+                f"STRICT ADDRESSING PROTOCOL (SUBSEQUENT INTERACTIONS):\n"
+                f"The initial greeting is already completed. From now on, you must NEVER call the user '{_user_name}' again. "
+                f"In EVERY single response, confirmation, and conversation, you must strictly address the user as 'Sir' "
+                f"(e.g. 'Sir, maine ye kaam kar diya hai', 'Haan Sir', 'Sir, message send ho gaya hai'). "
+                f"Never repeat '{_user_name}' after the first turn."
+            )
         identity_ctx = (
             f"[IDENTITY]\n"
             f"Your name is {self._asst_name}. "
@@ -1874,6 +1880,7 @@ class JarvisLive:
                                 self._interrupted = False  # fresh user utterance clears interrupt lock
 
                         if sc.turn_complete:
+                            self._has_greeted_by_name = True
                             if self._turn_done_event:
                                 self._turn_done_event.set()
 

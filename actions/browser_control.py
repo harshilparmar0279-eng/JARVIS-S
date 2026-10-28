@@ -90,8 +90,8 @@ def _normalize_url(url: str) -> str:
     Full URLs pass through unchanged.
     """
     url = url.strip()
-    if not url:
-        return "about:blank"
+    if not url or url.lower() in ("about:blank", "blank"):
+        return ""
     if "://" in url:
         return url
     # No dot at all → assume .com  (e.g. "instagram" → "instagram.com")

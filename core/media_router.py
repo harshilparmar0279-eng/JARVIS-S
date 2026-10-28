@@ -224,7 +224,9 @@ def _resolve_video_id(query: str) -> Optional[str]:
     return None
 
 
-def execute_media_command(intent_data: dict, player=None) -> Tuple[bool, str, dict]:
+def execute_media_command(intent_data: dict, player=None) -> Tuple[bool, str, dict]:
+    from core.command_lock import sync_command_mutex
+    from core.command_lock import sync_command_mutex
     """
     Executes the parsed media command with the selected browser and truthful reporting.
     

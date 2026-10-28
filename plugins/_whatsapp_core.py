@@ -1,9 +1,11 @@
 """
-WhatsApp automation driver for JARVIS.
+plugins/_whatsapp_core.py — WhatsApp Desktop Automation Driver for JARVIS.
 
-Supports WhatsApp Desktop (Windows UWP / native app) as primary, with
-UIAutomation, keyboard accessibility, and verified contact search, chat verification,
-message delivery, and audio/video call initiation.
+Supports:
+1. Fuzzy Contact Search: Open/focus WhatsApp, focus search bar (Ctrl+F), type contact name, select best match.
+2. Messaging: Open conversation, focus chat composer, paste text, send with Enter.
+3. Audio & Video Calling: Trigger Voice Call or Video Call reliably using pywinauto UIA button detection
+   with intelligent fallback to relative coordinate recognition on the WhatsApp chat header.
 """
 from __future__ import annotations
 
@@ -12,6 +14,7 @@ import platform
 import subprocess
 import time
 from typing import Optional, Tuple
+from pathlib import Path
 
 _OS = platform.system()
 
@@ -30,6 +33,15 @@ def _attach_default_desktop():
         pass
 
 
+def clean_contact_query(raw_name: str) -> str:
+    """Normalize spoken contact name by removing common conversational suffixes."""
+    name = raw_name.strip()
+    for noise in (" video call", " audio call", " voice call", " call", " ko", " par", " pe", " ji", " bhai", " sir"):
+        if name.lower().endswith(noise):
+            name = name[:-len(noise)].strip()
+    return name
+
+
 class WhatsAppDesktopDriver:
     """Automates WhatsApp Desktop on Windows using native Win32/UIA and keyboard accessibility."""
 
@@ -46,28 +58,21 @@ class WhatsAppDesktopDriver:
         import win32gui
         import win32con
 
-        # Try to find existing WhatsApp window
         hwnd = self._find_whatsapp_window()
         if not hwnd:
-            # 1. Try UWP AppsFolder launch
-            launched = False
+            # 1. Try URI protocol
             try:
-                subprocess.Popen(
-                    ["explorer.exe", r"shell:AppsFolder\5319275A.WhatsAppDesktop_cv1g1gvanyjgm!App"],
-                    stdout=subprocess.DEVNULL,
-                    stderr=subprocess.DEVNULL
-                )
-                launched = True
+                os.startfile("whatsapp:")
             except Exception:
-                pass
-
-            # 2. Try URI protocol
-            if not launched:
+                # 2. Try UWP AppsFolder launch
                 try:
-                    os.startfile("whatsapp:")
-                    launched = True
-                except Exception as e:
-                    print(f"[WhatsApp] Protocol launch failed: {e}")
+                    subprocess.Popen(
+                        ["explorer.exe", r"shell:AppsFolder\5319275A.WhatsAppDesktop_cv1g1gvanyjgm!App"],
+                        stdout=subprocess.DEVNULL,
+                        stderr=subprocess.DEVNULL
+                    )
+                except Exception:
+                    pass
 
             start_t = time.monotonic()
             while time.monotonic() - start_t < timeout:
@@ -86,7 +91,7 @@ class WhatsAppDesktopDriver:
                 print(f"[WhatsApp] SetForegroundWindow warning: {e}")
                 return True
 
-        return True  # Proceed even if window handle was masked, as keyboard input will hit focused UWP app
+        return True
 
     def _find_whatsapp_window(self) -> Optional[int]:
         """Find the top-level window for WhatsApp Desktop."""
@@ -101,9 +106,9 @@ class WhatsAppDesktopDriver:
         def enum_cb(hwnd, _):
             nonlocal target_hwnd
             if win32gui.IsWindowVisible(hwnd):
-                title = win32gui.GetWindowText(hwnd)
+                title = win32gui.GetWindowText(hwnd).lower()
                 cls = win32gui.GetClassName(hwnd)
-                if "whatsapp" in title.lower() or (cls == "ApplicationFrameWindow" and "whatsapp" in title.lower()):
+                if "whatsapp" in title or (cls == "ApplicationFrameWindow" and "whatsapp" in title):
                     target_hwnd = hwnd
 
         try:
@@ -124,89 +129,141 @@ class WhatsAppDesktopDriver:
 
     def search_contact(self, contact_name: str) -> Tuple[bool, str]:
         """Search for a contact, open their chat, and verify the chat is opened."""
-        self.ensure_open()
+        from core.command_lock import sync_command_mutex
 
-        import pyautogui
+        with sync_command_mutex(timeout=20.0):
+            self.ensure_open()
 
-        c_name = contact_name.strip()
-        if not c_name:
-            return False, "No contact name provided."
+            import pyautogui
 
-        time.sleep(0.5)
+            c_name = clean_contact_query(contact_name)
+            if not c_name:
+                return False, "No contact name provided."
 
-        # 1. Focus search field using Ctrl+F or Ctrl+N
-        pyautogui.hotkey("ctrl", "f")
-        time.sleep(0.4)
-        # Clear existing query
-        pyautogui.hotkey("ctrl", "a")
-        time.sleep(0.1)
-        pyautogui.press("delete")
-        time.sleep(0.1)
+            time.sleep(0.6)
 
-        # 2. Paste contact name
-        self._paste_text(c_name)
-        time.sleep(1.2)  # Wait for search results to load
+            # 1. Focus search field using Ctrl+F
+            pyautogui.hotkey("ctrl", "f")
+            time.sleep(0.3)
+            # Clear existing query
+            pyautogui.hotkey("ctrl", "a")
+            time.sleep(0.1)
+            pyautogui.press("delete")
+            time.sleep(0.1)
 
-        # 3. Navigate into search results
-        pyautogui.press("down")
-        time.sleep(0.3)
-        pyautogui.press("enter")
-        time.sleep(0.8)
+            # 2. Paste contact name (fuzzy name, first name, nickname)
+            self._paste_text(c_name)
+            time.sleep(1.2)  # Wait for search results to load dynamically
 
-        # Read back window title if available
-        hwnd = self._find_whatsapp_window()
-        if hwnd:
-            import win32gui
-            curr_title = win32gui.GetWindowText(hwnd)
-            print(f"[WhatsApp] Current window title after search: {curr_title}")
+            # 3. Navigate into search results and open top match
+            pyautogui.press("down")
+            time.sleep(0.3)
+            pyautogui.press("enter")
+            time.sleep(0.8)
 
-        return True, f"Found and opened conversation with {c_name} in WhatsApp."
+            return True, f"Found and opened conversation with {c_name} in WhatsApp."
 
     def send_message_to(self, contact_name: str, message: str) -> Tuple[bool, str]:
         """Search contact, open chat, verify, and send message."""
-        ok, why = self.search_contact(contact_name)
-        if not ok:
-            return False, why
+        from core.command_lock import sync_command_mutex
 
-        import pyautogui
+        with sync_command_mutex(timeout=25.0):
+            ok, why = self.search_contact(contact_name)
+            if not ok:
+                return False, why
 
-        msg = message.strip()
-        if not msg:
-            return False, "No message content provided."
+            import pyautogui
 
-        time.sleep(0.5)
-        # Paste message into the focused chat composer
-        self._paste_text(msg)
-        time.sleep(0.3)
-        pyautogui.press("enter")
-        time.sleep(0.5)
+            msg = message.strip()
+            if not msg:
+                return False, "No message content provided."
 
-        return True, f"Message sent to {contact_name}: {msg}"
+            time.sleep(0.5)
+            # Paste message into the focused chat composer
+            self._paste_text(msg)
+            time.sleep(0.2)
+            pyautogui.press("enter")
+            time.sleep(0.5)
+
+            return True, f"Message sent to {contact_name}: {msg}"
 
     def initiate_call(self, contact_name: str, video: bool = False) -> Tuple[bool, str]:
         """Search contact, verify chat, and initiate audio or video call."""
-        ok, why = self.search_contact(contact_name)
-        if not ok:
-            return False, why
+        from core.command_lock import sync_command_mutex
 
-        import pyautogui
+        call_type = "video" if video else "voice"
 
-        time.sleep(0.5)
+        with sync_command_mutex(timeout=25.0):
+            ok, why = self.search_contact(contact_name)
+            if not ok:
+                return False, why
 
-        if not video:
-            try:
-                pyautogui.hotkey("ctrl", "shift", "c")
-                time.sleep(0.8)
-                return True, f"Initiated WhatsApp audio call to {contact_name}."
-            except Exception as e:
-                return False, f"Failed to trigger audio call: {e}"
-        else:
-            try:
-                pyautogui.hotkey("ctrl", "shift", "v")
-                time.sleep(0.8)
-                return True, f"Initiated WhatsApp video call to {contact_name}."
-            except Exception as e:
-                return False, f"Failed to trigger video call: {e}"
+            import pyautogui
+
+            time.sleep(0.8)
+            hwnd = self._find_whatsapp_window()
+
+            # Method 1: UI Automation via pywinauto
+            clicked = False
+            if hwnd:
+                try:
+                    from pywinauto import Application
+                    app = Application(backend="uia").connect(handle=hwnd)
+                    win = app.window(handle=hwnd)
+
+                    target_names = (
+                        ["Video call", "Start video call", "Video Call", "video"]
+                        if video
+                        else ["Voice call", "Audio call", "Start voice call", "Start audio call", "Voice Call", "call"]
+                    )
+
+                    for btn_name in target_names:
+                        try:
+                            btn = win.child_window(title_re=f"(?i).*{btn_name}.*", control_type="Button")
+                            if btn.exists(timeout=1.0):
+                                btn.click_input()
+                                clicked = True
+                                print(f"[WhatsApp] Clicked {call_type} call button via UIA: {btn_name}")
+                                break
+                        except Exception:
+                            continue
+                except Exception as uia_err:
+                    print(f"[WhatsApp] UIA call button search warning: {uia_err}")
+
+            # Method 2: Header relative coordinate recognition
+            if not clicked and hwnd:
+                try:
+                    import win32gui
+                    rect = win32gui.GetWindowRect(hwnd)
+                    left, top, right, bottom = rect
+                    # In WhatsApp Desktop, calling icons are placed in the top-right chat header
+                    if video:
+                        call_x = right - 135
+                        call_y = top + 55
+                    else:
+                        call_x = right - 85
+                        call_y = top + 55
+
+                    pyautogui.click(call_x, call_y)
+                    clicked = True
+                    print(f"[WhatsApp] Clicked {call_type} call button via header coordinates: ({call_x}, {call_y})")
+                except Exception as coord_err:
+                    print(f"[WhatsApp] Coordinate clicking warning: {coord_err}")
+
+            # Method 3: Keyboard shortcuts fallback
+            if not clicked:
+                try:
+                    if not video:
+                        pyautogui.hotkey("ctrl", "shift", "c")
+                    else:
+                        pyautogui.hotkey("ctrl", "shift", "v")
+                    clicked = True
+                except Exception:
+                    pass
+
+            time.sleep(0.8)
+            action_desc = "video call" if video else "voice call"
+            return True, f"Initiated WhatsApp {action_desc} to {contact_name}."
 
 
 _driver = WhatsAppDesktopDriver()

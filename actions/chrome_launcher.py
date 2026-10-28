@@ -175,15 +175,26 @@ def format_available_accounts(profiles: list[dict]) -> str:
 
 def launch_chrome(profile_dir: str, url: str = "") -> tuple[bool, str]:
     """Launch Chrome with the given profile directory and destination URL."""
+    from core.command_lock import sync_command_mutex
+
     exe = find_chrome_executable()
     if not exe:
         return False, "Google Chrome is not installed or executable not found."
 
-    dest = url.strip() if url and url.strip() else "chrome://newtab"
-    args = [exe, f"--profile-directory={profile_dir}", dest]
+    clean_url = (url or "").strip()
+    if clean_url.lower() in ("about:blank", "blank"):
+        clean_url = ""
+
+    args = [exe]
+    if profile_dir:
+        args.append(f"--profile-directory={profile_dir}")
+    if clean_url:
+        args.append(clean_url)
 
     try:
-        subprocess.Popen(args, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        return True, f"Opened Chrome (profile: {profile_dir}) with {dest}."
+        with sync_command_mutex(timeout=15.0):
+            subprocess.Popen(args, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            dest_label = clean_url if clean_url else "default session"
+            return True, f"Opened Chrome (profile: {profile_dir or 'default'}) with {dest_label}."
     except Exception as e:
         return False, f"Failed to launch Chrome: {e}"

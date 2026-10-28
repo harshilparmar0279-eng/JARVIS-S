@@ -411,6 +411,18 @@ def open_app(parameters=None, response=None, player=None,
               f"raised — launching it instead, which is what brings back an "
               f"app that is only in the tray.")
 
+    # ── Dynamic Local System File & Application Launcher ──
+    try:
+        from core.local_launcher import find_local_target, launch_target
+        local_match = find_local_target(spoken)
+        if local_match:
+            ok, detail = launch_target(local_match)
+            if ok:
+                _log(player, f"JARVIS: {detail}")
+                return outcome.done("open_app", app=spoken, path=str(local_match), verified=True, message=detail)
+    except Exception as _ll_err:
+        print(f"[open_app] local_launcher warning: {_ll_err}")
+
     launcher_name = appidentity.launcher_name(spoken)
     before = appidentity.snapshot()
     _log(player, f"JARVIS: Opening {spoken}…")
