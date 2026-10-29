@@ -23,24 +23,21 @@ def is_port_in_use(port: int) -> bool:
 
 
 def ensure_dashboard_running():
-    """Ensure dashboard server is listening on port 8000."""
+    """Ensure JARVIS main application is running on port 8000."""
     if is_port_in_use(8000):
         print("[Dashboard] Port 8000 is already active (JARVIS is running).", flush=True)
         return None
 
-    print("[Dashboard] Starting JARVIS Dashboard backend on port 8000...", flush=True)
-    from dashboard.server import DashboardServer
-    srv = DashboardServer()
-
-    def run_srv():
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-        loop.run_until_complete(srv.serve())
-
-    t = threading.Thread(target=run_srv, daemon=True)
-    t.start()
-    time.sleep(2)
-    return srv
+    print("[Dashboard] Port 8000 is not active. Starting JARVIS core (main.py)...", flush=True)
+    python_exe = sys.executable
+    subprocess.Popen([python_exe, str(BASE_DIR / "main.py")])
+    for _ in range(25):
+        time.sleep(1)
+        if is_port_in_use(8000):
+            print("[Dashboard] JARVIS core started successfully on port 8000.", flush=True)
+            return None
+    print("[Warning] JARVIS is taking longer than usual to start. Please check the JARVIS HUD window.", flush=True)
+    return None
 
 
 def main():
